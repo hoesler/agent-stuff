@@ -1,0 +1,39 @@
+{
+  "name": "hoesler",
+  "version": "1.0.0",
+  "description": "Christoph's coding agent commands, skills, extensions, and themes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hoesler/agent-stuff.git"
+  },
+  "readme": "README.md",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-skill",
+    "pi-theme"
+  ],
+  "pi": {
+    "extensions": [
+      "./pi/extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "themes": [
+      "./pi/themes"
+    ],
+    "prompts": [
+      "./pi/commands"
+    ]
+  },
+  "dependencies": {
+    "diff": "^8.0.2"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-tui": "*"
+  }
+}
