@@ -29,31 +29,53 @@ interface CopilotUser {
 interface AuthJson {
   "github-copilot"?: {
     refresh?: string;
+    enterpriseUrl?: string | null;
   };
 }
 
-async function getOAuthToken(): Promise<string | null> {
+interface CopilotAuth {
+  token: string;
+  enterpriseUrl?: string;
+}
+
+async function getOAuthToken(): Promise<CopilotAuth | null> {
   try {
     const raw = await readFile(AUTH_PATH, "utf8");
     const auth = JSON.parse(raw) as AuthJson;
-    return auth["github-copilot"]?.refresh ?? null;
+    const entry = auth["github-copilot"];
+    if (!entry?.refresh) return null;
+    return {
+      token: entry.refresh,
+      enterpriseUrl: entry.enterpriseUrl ?? undefined,
+    };
   } catch {
     return null;
   }
 }
 
-async function showCopilotUsage(ctx: ExtensionContext): Promise<void> {
-  const token = await getOAuthToken();
+function getApiBaseUrl(enterpriseUrl?: string): string {
+  if (!enterpriseUrl) return "https://api.github.com";
+  // GHES: api lives at https://api.<domain> (GitHub Enterprise Cloud / GHE.com)
+  // For self-hosted GHES the REST API is at https://<domain>/api/v3, but
+  // copilot_internal endpoints typically live at https://api.<domain>.
+  return `https://api.${enterpriseUrl}`;
+}
 
-  if (!token) {
+async function showCopilotUsage(ctx: ExtensionContext): Promise<void> {
+  const auth = await getOAuthToken();
+
+  if (!auth) {
     ctx.ui.notify("Copilot: not logged in (run /login)", "warning");
     return;
   }
 
+  const { token, enterpriseUrl } = auth;
+  const apiBase = getApiBaseUrl(enterpriseUrl);
+
   ctx.ui.setWorkingMessage("Fetching Copilot usage...");
 
   try {
-    const res = await fetch("https://api.github.com/copilot_internal/user", {
+    const res = await fetch(`${apiBase}/copilot_internal/user`, {
       headers: {
         Authorization: `token ${token}`,
         Accept: "application/vnd.github+json",
