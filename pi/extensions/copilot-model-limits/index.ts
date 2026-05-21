@@ -128,16 +128,19 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
 
   if (apiModels.length === 0) return;
 
-  // Build lookup of API limits, keyed by model ID.
-  // Only include picker-enabled models — this excludes internal/legacy models
-  // (e.g. gpt-4o-mini-2024-07-18, text-embedding-*) and disabled ones.
-  const limitsById = new Map<
-    string,
-    { contextWindow: number; maxTokens: number }
-  >();
+  // Build lookup of API limits and a set of picker-enabled model IDs.
+  // Only picker-enabled models are user-facing; the rest (internal/legacy/disabled)
+  // should be excluded from the final list entirely.
+  const pickerEnabledIds = new Set<string>();
+  const limitsById = new Map<string, { contextWindow: number; maxTokens: number }>();
 
   for (const m of apiModels) {
     if (!m.model_picker_enabled) continue;
+
+    pickerEnabledIds.add(m.id);
+    // Also index by base name (strip date suffix like -2025-04-14)
+    const base = m.id.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+    if (base !== m.id) pickerEnabledIds.add(base);
 
     const ctx = m.capabilities?.limits?.max_context_window_tokens;
     const out = m.capabilities?.limits?.max_output_tokens;
@@ -145,8 +148,6 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
     if (ctx != null && out != null) {
       const entry = { contextWindow: ctx, maxTokens: out };
       limitsById.set(m.id, entry);
-      // Also index by base name (strip date suffix like -2025-04-14)
-      const base = m.id.replace(/-\d{4}-\d{2}-\d{2}$/, "");
       if (base !== m.id && !limitsById.has(base)) {
         limitsById.set(base, entry);
       }
@@ -172,6 +173,10 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
 
   for (const [modelId, model] of Object.entries(builtInModels) as [string, any][]) {
     const apiLimits = limitsById.get(modelId);
+
+    // Drop built-in models not present in the API's picker-enabled set —
+    // they are unavailable for this subscription or have been disabled.
+    if (!pickerEnabledIds.has(modelId)) continue;
 
     const patchedContextWindow = apiLimits?.contextWindow ?? model.contextWindow;
     const patchedMaxTokens = apiLimits?.maxTokens ?? model.maxTokens;
