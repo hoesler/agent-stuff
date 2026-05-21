@@ -12,14 +12,15 @@
  * 1. Reads the Copilot OAuth token from ~/.pi/agent/auth.json
  * 2. Fetches model capabilities from the Copilot /models API
  * 3. Patches the built-in github-copilot models with correct contextWindow/maxTokens
- * 4. Filters out models explicitly disabled in GitHub Copilot settings
+ * 4. Only uses picker-enabled models from the API for limit lookups
  *
  * Falls back silently to built-in models if the API call fails or no auth is available.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const COPILOT_HEADERS: Record<string, string> = {
@@ -32,6 +33,7 @@ const COPILOT_HEADERS: Record<string, string> = {
 interface CopilotModel {
   id: string;
   name: string;
+  model_picker_enabled?: boolean;
   policy?: { state: string };
   capabilities?: {
     limits?: {
@@ -89,6 +91,17 @@ async function fetchCopilotModels(
   return data.data ?? [];
 }
 
+/**
+ * Resolve the path to pi-ai's models.generated.js by deriving it from the
+ * pi-ai package entry point that jiti aliases for extensions.
+ */
+async function loadBuiltInCopilotModels(): Promise<Record<string, any> | undefined> {
+  const piAiMain = fileURLToPath(import.meta.resolve("@earendil-works/pi-ai"));
+  const modelsPath = join(dirname(piAiMain), "models.generated.js");
+  const mod = await import(modelsPath);
+  return mod.MODELS?.["github-copilot"];
+}
+
 export default async function copilotModelLimits(pi: ExtensionAPI) {
   // process.env.HOME may be undefined in pi's execution context
   const home = process.env.HOME || homedir();
@@ -116,22 +129,23 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   if (apiModels.length === 0) return;
 
   // Build lookup of API limits, keyed by model ID.
-  // API returns both versioned (gpt-4.1-2025-04-14) and unversioned (gpt-4.1) IDs.
+  // Only include picker-enabled models — this excludes internal/legacy models
+  // (e.g. gpt-4o-mini-2024-07-18, text-embedding-*) and disabled ones.
   const limitsById = new Map<
     string,
-    { contextWindow: number; maxTokens: number; disabled: boolean }
+    { contextWindow: number; maxTokens: number }
   >();
 
   for (const m of apiModels) {
+    if (!m.model_picker_enabled) continue;
+
     const ctx = m.capabilities?.limits?.max_context_window_tokens;
     const out = m.capabilities?.limits?.max_output_tokens;
-    // Only "disabled" means explicitly turned off; "enabled" and undefined are both usable
-    const disabled = m.policy?.state === "disabled";
 
     if (ctx != null && out != null) {
-      const entry = { contextWindow: ctx, maxTokens: out, disabled };
+      const entry = { contextWindow: ctx, maxTokens: out };
       limitsById.set(m.id, entry);
-      // Also index by base name (strip date suffix)
+      // Also index by base name (strip date suffix like -2025-04-14)
       const base = m.id.replace(/-\d{4}-\d{2}-\d{2}$/, "");
       if (base !== m.id && !limitsById.has(base)) {
         limitsById.set(base, entry);
@@ -140,21 +154,14 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   }
 
   // Load built-in model definitions to preserve api, compat, thinkingLevelMap, etc.
-  // The direct import path resolves incorrectly when pi bundles pi-ai, so we
-  // use the known installation path under ~/.pi/agent/npm/.
   let builtInModels: Record<string, any>;
   try {
-    const modelsPath = join(
-      home,
-      ".pi/agent/npm/node_modules/@earendil-works/pi-ai/dist/models.generated.js",
-    );
-    const mod = await import(modelsPath);
-    builtInModels = mod.MODELS?.["github-copilot"];
+    builtInModels = (await loadBuiltInCopilotModels()) ?? {};
   } catch {
     return;
   }
 
-  if (!builtInModels || Object.keys(builtInModels).length === 0) return;
+  if (Object.keys(builtInModels).length === 0) return;
 
   // Determine the correct base URL for this auth context
   const baseUrl = getBaseUrl(copilotAuth.access, copilotAuth.enterpriseUrl);
@@ -165,9 +172,6 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
 
   for (const [modelId, model] of Object.entries(builtInModels) as [string, any][]) {
     const apiLimits = limitsById.get(modelId);
-
-    // Skip models explicitly disabled in GitHub Copilot settings
-    if (apiLimits?.disabled) continue;
 
     const patchedContextWindow = apiLimits?.contextWindow ?? model.contextWindow;
     const patchedMaxTokens = apiLimits?.maxTokens ?? model.maxTokens;
