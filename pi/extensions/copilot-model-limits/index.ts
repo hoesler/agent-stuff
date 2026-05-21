@@ -17,11 +17,13 @@
  * Falls back silently to built-in models if the API call fails or no auth is available.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+// @ts-ignore — no type declarations for this internal submodule
+import { getGitHubCopilotBaseUrl, refreshGitHubCopilotToken } from "@earendil-works/pi-ai/oauth";
 
 const COPILOT_HEADERS: Record<string, string> = {
   "User-Agent": "GitHubCopilotChat/0.35.0",
@@ -48,32 +50,29 @@ interface AuthEntry {
   type: string;
   refresh: string;
   access: string;
-  expires: number;
+  expires?: number;
   enterpriseUrl?: string;
 }
 
 /**
- * Derive the Copilot API base URL from the token, matching pi-core's logic:
- * 1. Parse proxy-ep from the token (proxy.xxx → api.xxx)
- * 2. Fall back to copilot-api.{enterpriseDomain} for enterprise
- * 3. Fall back to api.individual.githubcopilot.com
+ * Return a valid access token, refreshing via the refresh token if the stored
+ * one has expired. Writes the new credentials back to auth.json so pi picks
+ * them up on the next startup (same behaviour as AuthStorage).
  */
-function getBaseUrl(token: string, enterpriseDomain?: string): string {
-  const proxyMatch = token.match(/proxy-ep=([^;]+)/);
-  if (proxyMatch) {
-    return `https://${proxyMatch[1].replace(/^proxy\./, "api.")}`;
+async function getAccessToken(authPath: string, entry: AuthEntry): Promise<string> {
+  if (!entry.expires || Date.now() < entry.expires) {
+    return entry.access;
   }
-  if (enterpriseDomain) {
-    return `https://copilot-api.${enterpriseDomain}`;
-  }
-  return "https://api.individual.githubcopilot.com";
+  // Token expired — refresh it
+  const refreshed = await refreshGitHubCopilotToken(entry.refresh, entry.enterpriseUrl);
+  // Write back so pi's AuthStorage sees the fresh token
+  const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+  auth["github-copilot"] = { ...auth["github-copilot"], ...refreshed };
+  writeFileSync(authPath, JSON.stringify(auth, null, 2));
+  return refreshed.access;
 }
 
-async function fetchCopilotModels(
-  token: string,
-  enterpriseDomain?: string,
-): Promise<CopilotModel[]> {
-  const baseUrl = getBaseUrl(token, enterpriseDomain);
+async function fetchCopilotModels(token: string, baseUrl: string): Promise<CopilotModel[]> {
   const response = await fetch(`${baseUrl}/models`, {
     headers: {
       Accept: "application/json",
@@ -116,12 +115,20 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   }
 
   const copilotAuth = auth["github-copilot"];
-  if (!copilotAuth?.access) return;
-  if (copilotAuth.expires && copilotAuth.expires < Date.now()) return;
+  if (!copilotAuth?.access || !copilotAuth?.refresh) return;
+
+  let accessToken: string;
+  try {
+    accessToken = await getAccessToken(authPath, copilotAuth);
+  } catch {
+    return; // Refresh failed — fall back silently
+  }
+
+  const baseUrl = getGitHubCopilotBaseUrl(accessToken, copilotAuth.enterpriseUrl);
 
   let apiModels: CopilotModel[];
   try {
-    apiModels = await fetchCopilotModels(copilotAuth.access, copilotAuth.enterpriseUrl);
+    apiModels = await fetchCopilotModels(accessToken, baseUrl);
   } catch {
     return; // Fail silently — built-in models remain
   }
@@ -163,9 +170,6 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   }
 
   if (Object.keys(builtInModels).length === 0) return;
-
-  // Determine the correct base URL for this auth context
-  const baseUrl = getBaseUrl(copilotAuth.access, copilotAuth.enterpriseUrl);
 
   // Build patched model list
   const patchedModels = [];
