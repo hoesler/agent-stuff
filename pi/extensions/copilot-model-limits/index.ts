@@ -173,7 +173,6 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
 
   // Build patched model list
   const patchedModels = [];
-  const changes: string[] = [];
 
   for (const [modelId, model] of Object.entries(builtInModels) as [string, any][]) {
     const apiLimits = limitsById.get(modelId);
@@ -184,12 +183,6 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
 
     const patchedContextWindow = apiLimits?.contextWindow ?? model.contextWindow;
     const patchedMaxTokens = apiLimits?.maxTokens ?? model.maxTokens;
-
-    if (model.contextWindow !== patchedContextWindow || model.maxTokens !== patchedMaxTokens) {
-      changes.push(
-        `  ${modelId}: ctx ${model.contextWindow}→${patchedContextWindow}, max ${model.maxTokens}→${patchedMaxTokens}`,
-      );
-    }
 
     patchedModels.push({
       id: model.id,
@@ -218,14 +211,4 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
     apiKey: "__COPILOT_OAUTH__",
     models: patchedModels,
   });
-
-  // Show a notification so users can verify the extension worked
-  if (changes.length > 0) {
-    pi.on("session_start", (_event, ctx) => {
-      ctx.ui.notify(
-        `[copilot-model-limits] Patched ${changes.length} model(s) with API limits`,
-        "info",
-      );
-    });
-  }
 }
