@@ -208,7 +208,7 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   // at runtime and take precedence over this fallback in getApiKeyAndHeaders().
   pi.registerProvider("github-copilot", {
     baseUrl,
-    apiKey: "__COPILOT_OAUTH__",
+    apiKey: "$__COPILOT_OAUTH__",
     models: patchedModels,
   });
 }
