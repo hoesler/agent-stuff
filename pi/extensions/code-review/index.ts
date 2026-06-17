@@ -24,7 +24,7 @@
  * - `/review --extra "focus on performance regressions"` - add extra review instruction (works with any mode)
  *
  * Azure DevOps authentication (tried in order):
- * - AZURE_DEVOPS_PAT or AZURE_DEVOPS_TOKEN environment variable
+ * - AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_PAT, or AZURE_DEVOPS_TOKEN environment variable
  * - `az account get-access-token` (Azure CLI)
  *
  * Project-specific review guidelines:
@@ -61,7 +61,7 @@ const REVIEW_SETTINGS_TYPE = "review-settings";
 const GH_SETUP_INSTRUCTIONS =
 	"Install GitHub CLI (`gh`) from https://cli.github.com/ (macOS: `brew install gh`), then sign in with `gh auth login` and verify with `gh auth status`."
 const ADO_AUTH_INSTRUCTIONS =
-	"Set AZURE_DEVOPS_PAT or AZURE_DEVOPS_TOKEN env var with a Personal Access Token, or ensure `az` CLI is installed and signed in (`az login`).";
+	"Set AZURE_DEVOPS_EXT_PAT, AZURE_DEVOPS_PAT, or AZURE_DEVOPS_TOKEN env var with a Personal Access Token, or ensure `az` CLI is installed and signed in (`az login`).";
 const ADO_CHECKOUT_BLOCKED_BY_PENDING_CHANGES_MESSAGE =
 	"Cannot checkout ADO PR: you have uncommitted changes. Please commit or stash them first.";;
 const PR_CHECKOUT_BLOCKED_BY_PENDING_CHANGES_MESSAGE =
@@ -458,7 +458,7 @@ async function checkoutPr(pi: ExtensionAPI, prNumber: number): Promise<{ success
  * Tries env vars first (AZURE_DEVOPS_PAT, AZURE_DEVOPS_TOKEN), then az CLI.
  */
 async function getAdoToken(pi: ExtensionAPI): Promise<string | null> {
-	const pat = process.env.AZURE_DEVOPS_PAT || process.env.AZURE_DEVOPS_TOKEN;
+	const pat = process.env.AZURE_DEVOPS_EXT_PAT || process.env.AZURE_DEVOPS_PAT || process.env.AZURE_DEVOPS_TOKEN;
 	if (pat) return pat;
 
 	const { stdout, code } = await pi.exec("az", [
