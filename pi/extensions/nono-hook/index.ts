@@ -29,8 +29,28 @@ interface NonoCapFile {
 export default function (pi: ExtensionAPI) {
     // Check if we're inside a nono sandbox
     const capFile = process.env.NONO_CAP_FILE;
-    if (!capFile || !existsSync(capFile)) {
-        return; // Not in nono sandbox
+
+    if (!capFile) {
+        // NONO_CAP_FILE is not set — not running inside the nono sandbox.
+        // Prompt the user on startup so they don't accidentally run pi unsandboxed.
+        pi.on("session_start", async (event, ctx) => {
+            if (event.reason !== "startup") return;
+            if (!ctx.hasUI) return; // headless mode — continue silently
+
+            const ok = await ctx.ui.confirm(
+                "Not in nono sandbox",
+                "NONO_CAP_FILE is not set — pi is not running inside the nono security sandbox. Continue anyway?"
+            );
+
+            if (!ok) {
+                ctx.shutdown();
+            }
+        });
+        return;
+    }
+
+    if (!existsSync(capFile)) {
+        return; // Cap file declared but missing — silent bail
     }
 
     // Read capabilities file
