@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "defaultMode": "medium",
+  "cycleShortcut": "f8",
+  "modes": [
+    {
+      "id": "low",
+      "label": "Low",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "thinkingLevel": "low",
+      "description": "Fast, low-cost mode for small, well-defined tasks"
+    },
+    {
+      "id": "medium",
+      "label": "Medium",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "thinkingLevel": "medium",
+      "description": "Balanced intelligence, speed, and cost"
+    },
+    {
+      "id": "high",
+      "label": "High",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "thinkingLevel": "high",
+      "description": "Deep reasoning for hard tasks"
+    },
+    {
+      "id": "ultra",
+      "label": "Ultra",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "thinkingLevel": "max",
+      "description": "Maximum effort for hard, open-ended tasks"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -38,6 +38,13 @@ test("environment config path overrides the global path", () => {
     resolveConfigPath({ envPath: "  ", startupCwd: "/repo", agentDir: "/agent" }),
     "/agent/model-modes.json",
   );
+});
+
+test("documented example is a valid configuration", async () => {
+  const raw = JSON.parse(await readFile(new URL("./example.json", import.meta.url), "utf8"));
+  const parsed = parseModeConfig(raw);
+  assert.deepEqual(parsed.modes.map((mode) => mode.id), ["low", "medium", "high", "ultra"]);
+  assert.equal(parsed.modes[3]?.thinkingLevel, "max");
 });
 
 test("parser normalizes optional presentation fields", () => {
