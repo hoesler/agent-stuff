@@ -156,6 +156,19 @@ test("intermediate selection events while applying do not publish transient stat
   } finally { h.restore(); }
 });
 
+test("thrown thinking-level application clears applying before later selection events", async () => {
+  const h = await harness();
+  try {
+    h.setThinkingBehavior(() => { throw new Error("thinking level unavailable"); });
+    await h.commands.get("mode")!.handler("high", h.context);
+    assert.match(h.notifications.at(-1)![0], /Mode high failed: thinking level unavailable/);
+    const before = h.statuses.length;
+    await h.events.get("thinking_level_select")!({}, h.context);
+    assert.equal(h.statuses.length, before + 1);
+    assert.equal(h.statuses.at(-1), "mode:custom");
+  } finally { h.restore(); }
+});
+
 test("manual selections publish custom status unless exact triple matches", async () => {
   const h = await harness();
   try {

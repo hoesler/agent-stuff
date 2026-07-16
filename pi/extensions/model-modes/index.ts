@@ -10,7 +10,7 @@ import { applyMode, type ApplyRuntime } from "./apply-mode.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
 import { cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
-import type { ActiveMode, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
+import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
 export default async function modelModesExtension(pi: ExtensionAPI): Promise<void> {
   const startupCwd = process.cwd();
@@ -56,8 +56,21 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
 
   const activate = async (ctx: ExtensionContext, mode: ModeDefinition, quiet = false) => {
     applying = true;
-    const result = await applyMode(runtime(ctx), mode);
-    applying = false;
+    let result: ApplyResult;
+    try {
+      result = await applyMode(runtime(ctx), mode);
+    } catch (cause) {
+      result = {
+        ok: false,
+        mode,
+        stage: "thinking",
+        message: cause instanceof Error ? cause.message : String(cause),
+        stateChanged: true,
+        rollbackSucceeded: false,
+      };
+    } finally {
+      applying = false;
+    }
     updateStatus(ctx);
     if (!quiet) {
       if (result.ok) ctx.ui.notify(`Mode: ${mode.label}${mode.description ? ` — ${mode.description}` : ""}`, "info");
