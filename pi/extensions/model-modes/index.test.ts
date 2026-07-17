@@ -313,3 +313,42 @@ test("before_agent_start injects nothing when the enabled configuration is inval
     assert.equal(result, undefined);
   } finally { h.restore(); }
 });
+
+test("BUG: overlapping shortcut presses (not awaited by the real dispatcher) race and can leave status stuck on custom", async () => {
+  // interactive-mode.js dispatches extension shortcuts as
+  // `Promise.resolve(shortcut.handler(createContext())).catch(...)` -- it does NOT
+  // await the handler before processing the next keystroke. Rapidly pressing the
+  // cycle shortcut therefore starts a second `cycle()` while the first is still
+  // mid-flight (still awaiting config reload / setModel). Reproduce that here by
+  // firing two shortcut invocations back-to-back without awaiting the first.
+  const threeModes: Mode[] = [
+    { id: "low", label: "Low", provider: "test", model: "low", thinkingLevel: "low" },
+    { id: "medium", label: "Medium", provider: "test", model: "medium", thinkingLevel: "medium" },
+    { id: "high", label: "High", provider: "test", model: "high", thinkingLevel: "high" },
+  ];
+  const h = await harness({ modes: threeModes, defaultMode: "low", shortcut: "f8", available: ["low", "medium", "high"] });
+  try {
+    // Prime state: currently on "low" (matches harness defaults).
+    await h.commands.get("mode")!.handler("low", h.context);
+    assert.match(h.statuses.at(-1)!, /^mode:low /);
+
+    // Give setModel a real async gap (like network/auth/disk I/O in production)
+    // so overlapping cycles interleave instead of running strictly sequentially.
+    h.setModel(async (target) => { await Promise.resolve(); await Promise.resolve(); return true; });
+
+    const shortcut = h.shortcuts.get("f8")!.handler;
+    // Two rapid presses, exactly as the un-awaited dispatcher would trigger them.
+    const first = shortcut(h.context);
+    const second = shortcut(h.context);
+    await Promise.all([first, second]);
+
+    // Two forward cycles from "low" should deterministically land on "high".
+    assert.equal(h.current?.id, "high", "model should have advanced two steps");
+    assert.equal(h.thinking, "high", "thinking level should match the final mode");
+    assert.match(
+      h.statuses.at(-1)!,
+      /^mode:high /,
+      `status should reflect the settled mode, got: ${h.statuses.at(-1)}`,
+    );
+  } finally { h.restore(); }
+});

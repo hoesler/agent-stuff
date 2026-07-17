@@ -23,6 +23,21 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const registeredShortcut = initial.ok ? initial.config.cycleShortcut : undefined;
   let active: ActiveMode = { kind: "error" };
   let applying = false;
+  // Serialize cycle/activate calls so overlapping invocations (e.g. rapid
+  // shortcut presses, which the TUI dispatches fire-and-forget without
+  // awaiting the previous handler) can never interleave their model/thinking
+  // mutations. Without this, two concurrent activations can leave the real
+  // (model, thinkingLevel) pair not matching any configured mode, which
+  // correctly-but-confusingly renders as "mode:custom".
+  let queue: Promise<unknown> = Promise.resolve();
+  const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = queue.then(fn, fn);
+    queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 
   registerAmpEditorStatusHook(() => {
     if (active.kind === "named") return `mode:${active.mode.id}`;
@@ -96,7 +111,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     return snapshot;
   };
 
-  const activateById = async (ctx: ExtensionContext, id: string): Promise<void> => {
+  const activateByIdImpl = async (ctx: ExtensionContext, id: string): Promise<void> => {
     const snapshot = loader.current;
     if (!snapshot.ok) return;
     const mode = snapshot.config.modes.find((item) => item.id === id);
@@ -107,12 +122,15 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     await activate(ctx, mode);
   };
 
+  // Entry point: serialized so it can never interleave with a concurrent cycle/activation.
+  const activateById = (ctx: ExtensionContext, id: string): Promise<void> => serialize(() => activateByIdImpl(ctx, id));
+
   const unavailableMessage = (snapshot: Extract<ConfigSnapshot, { ok: false }>): string =>
     snapshot.reason === "missing"
       ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config, or /mode doctor for details.`
       : "Model modes configuration is invalid; run /mode doctor for details.";
 
-  const cycle = async (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => {
+  const cycleImpl = async (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => {
     const snapshot = await refresh(ctx);
     if (!snapshot.ok) {
       ctx.ui.notify(unavailableMessage(snapshot), "warning");
@@ -130,6 +148,15 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     }
     ctx.ui.notify(`No usable mode: ${failures.join("; ")}`, "warning");
   };
+
+  // Entry point: serialized. The TUI dispatches extension shortcuts
+  // fire-and-forget (it does not await the previous keypress's handler before
+  // processing the next one), so rapid presses of the cycle shortcut would
+  // otherwise start overlapping cycles that interleave their model/thinking
+  // mutations and can leave the real state matching no configured mode
+  // (rendered as "mode:custom"). Serializing guarantees each cycle fully
+  // settles before the next one starts.
+  const cycle = (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => serialize(() => cycleImpl(ctx, direction));
 
   const showPicker = async (ctx: ExtensionContext, config: ModeConfig): Promise<void> => {
     const items: SelectItem[] = config.modes.map((mode) => ({
@@ -253,7 +280,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     updateStatus(ctx, snapshot);
     if (snapshot.ok && isFreshSession(event, ctx.sessionManager.getEntries())) {
       const mode = snapshot.config.modes.find((item) => item.id === snapshot.config.defaultMode)!;
-      await activate(ctx, mode);
+      await serialize(() => activate(ctx, mode));
     }
   });
 
