@@ -102,13 +102,13 @@ test("direct mode selection applies the requested mode", async () => {
   } finally { h.restore(); }
 });
 
-test("status combines mode id with the active model and thinking level, and the switch toast omits the description", async () => {
+test("status combines mode id with the active model and thinking level, and no success toast is shown (status bar is the source of truth)", async () => {
   const h = await harness();
   try {
+    const notificationsBefore = h.notifications.length;
     await h.commands.get("mode")!.handler("high", h.context);
     assert.equal(h.statuses.at(-1), "mode:high (high · thinking:high)");
-    assert.equal(h.notifications.at(-1)![0], "Mode: High");
-    assert.doesNotMatch(h.notifications.at(-1)![0], /Careful/);
+    assert.equal(h.notifications.length, notificationsBefore, "switching modes successfully should not push a toast; the status bar already reflects it");
   } finally { h.restore(); }
 });
 
