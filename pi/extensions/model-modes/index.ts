@@ -13,7 +13,7 @@ import { applyMode, type ApplyRuntime } from "./apply-mode.ts";
 import { formatModeCatalog } from "./catalog.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
-import { cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
+import { type ActualSelection, cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
 import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
@@ -105,23 +105,28 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     },
   });
 
-  const updateStatus = (ctx: ExtensionContext, snapshot: ConfigSnapshot = loader.current, source = "unknown"): void => {
+  // ctx.model is NOT always a live getter: the TUI's shortcut dispatcher
+  // (interactive-mode.js setupExtensionShortcuts) builds its context with
+  // `model: this.session.model`, a plain value frozen at keypress time. After
+  // applyMode() switches the model, that snapshot still reports the pre-switch
+  // model, so inference would pair {old model, new thinking level}, match no
+  // mode, and flash "mode:custom". Callers that just applied a known selection
+  // must pass it explicitly instead of trusting ctx.model.
+  const updateStatus = (ctx: ExtensionContext, snapshot: ConfigSnapshot = loader.current, source = "unknown", selection?: ActualSelection): void => {
+    const effective = selection ?? {
+      provider: ctx.model?.provider,
+      model: ctx.model?.id,
+      thinkingLevel: pi.getThinkingLevel() as ThinkingLevel,
+    };
     if (!snapshot.ok) active = { kind: "error" };
     else {
-      const selection = {
-        provider: ctx.model?.provider,
-        model: ctx.model?.id,
-        thinkingLevel: pi.getThinkingLevel() as ThinkingLevel,
-      };
-      active = inferActiveMode(snapshot.config, selection);
+      active = inferActiveMode(snapshot.config, effective);
       debugLog(
-        `updateStatus[source=${source}, applying=${applying}] selection=${JSON.stringify(selection)} modes=${JSON.stringify(snapshot.config.modes.map((m) => ({ id: m.id, provider: m.provider, model: m.model, thinkingLevel: m.thinkingLevel })))} -> ${active.kind}`,
+        `updateStatus[source=${source}, applying=${applying}] selection=${JSON.stringify(effective)} modes=${JSON.stringify(snapshot.config.modes.map((m) => ({ id: m.id, provider: m.provider, model: m.model, thinkingLevel: m.thinkingLevel })))} -> ${active.kind}`,
       );
     }
     const label = active.kind === "named" ? active.mode.id : active.kind;
-    const modelId = ctx.model?.id;
-    const level = pi.getThinkingLevel();
-    const detail = active.kind !== "error" && modelId ? ` (${modelId} · thinking:${level})` : "";
+    const detail = active.kind !== "error" && effective.model ? ` (${effective.model} · thinking:${effective.thinkingLevel})` : "";
     ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
   };
 
@@ -142,20 +147,16 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     } finally {
       applying = false;
     }
-    updateStatus(ctx, undefined, "activate");
-    if (process.env.PI_MODEL_MODES_DEBUG && result.ok) {
-      // Double-set probe: call setModel again with the SAME target we just applied.
-      // session.setModel() computes `previousModel = this.model` (a session-internal
-      // read, independent of our ctx) at the very start of the call. If that still
-      // reports the OLD model here, the write path itself never landed (or got
-      // reverted) -- if it reports the model we just applied, the write succeeded
-      // and only OUR read of ctx.model is stale/wrong.
-      const probeTarget = ctx.modelRegistry.find(mode.provider, mode.model);
-      if (probeTarget) {
-        debugLog(`probe: re-issuing setModel(${mode.provider}/${mode.model}) to inspect session-internal previousModel via the resulting event`);
-        await pi.setModel(probeTarget);
-      }
-    }
+    // On success we know the exact selection we just applied and verified;
+    // pass it explicitly so a keypress-time ctx.model snapshot can't skew the
+    // inference. On failure the state was rolled back (or left as-is), so the
+    // snapshot read is the best available.
+    updateStatus(
+      ctx,
+      undefined,
+      "activate",
+      result.ok ? { provider: mode.provider, model: mode.model, thinkingLevel: mode.thinkingLevel } : undefined,
+    );
     if (!quiet) {
       if (result.ok) ctx.ui.notify(`Mode: ${mode.label}`, "info");
       else ctx.ui.notify(`Mode ${mode.id} failed: ${result.message}`, "warning");

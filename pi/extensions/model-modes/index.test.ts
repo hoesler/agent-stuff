@@ -332,6 +332,34 @@ test("before_agent_start injects nothing when the enabled configuration is inval
   } finally { h.restore(); }
 });
 
+test("BUG: TUI shortcut contexts snapshot ctx.model at keypress time; applied mode must publish named status anyway", async () => {
+  // interactive-mode.js setupExtensionShortcuts() does NOT hand shortcut
+  // handlers the runner's context (whose `model` is a live getter). It builds
+  // its own literal with `model: this.session.model` -- a plain value frozen
+  // at keypress time. After applyMode() switches the model, reading ctx.model
+  // still returns the PRE-switch model, so status inference used to see e.g.
+  // {old-model, new-thinking}, match no mode, and flash "mode:custom" until a
+  // later event with a live context self-healed it.
+  const before = new Set(ampEditorHooks());
+  const h = await harness();
+  try {
+    const hook = latestAmpEditorHook(before);
+    const live = h.context as unknown as { model: Model<Api> | undefined; modelRegistry: unknown; sessionManager: unknown; ui: unknown };
+    const keypressSnapshot = {
+      mode: "tui",
+      modelRegistry: live.modelRegistry,
+      model: live.model, // plain data property, frozen now -- exactly like interactive-mode.js
+      sessionManager: live.sessionManager,
+      isIdle: () => true,
+      ui: live.ui,
+    } as unknown as ExtensionContext;
+    await h.shortcuts.get("f8")!.handler(keypressSnapshot);
+    assert.equal(h.current?.id, "high", "cycle should have applied the next mode");
+    assert.equal(hook(), "mode:high", "status hook must reflect the mode that was just applied");
+    assert.equal(h.statuses.at(-1), "mode:high (high · thinking:high)");
+  } finally { h.restore(); }
+});
+
 test("BUG: overlapping shortcut presses (not awaited by the real dispatcher) race and can leave status stuck on custom", async () => {
   // interactive-mode.js dispatches extension shortcuts as
   // `Promise.resolve(shortcut.handler(createContext())).catch(...)` -- it does NOT
