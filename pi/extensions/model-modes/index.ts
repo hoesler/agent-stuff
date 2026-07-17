@@ -99,7 +99,12 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const cycle = async (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => {
     const snapshot = await refresh(ctx);
     if (!snapshot.ok) {
-      ctx.ui.notify("Model modes unavailable; run /mode doctor", "warning");
+      ctx.ui.notify(
+        snapshot.reason === "missing"
+          ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config.`
+          : "Model modes configuration is invalid; run /mode doctor for details.",
+        "warning",
+      );
       return;
     }
     const failures: string[] = [];
@@ -167,11 +172,39 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       "/mode next — cycle forward",
       "/mode previous — cycle backward",
       "/mode doctor — inspect configuration",
+      "/mode init — ask the model to draft a starter configuration",
       "/mode help — show this help",
       `Config: ${loader.path}`,
     ].join("\n");
     if (ctx.mode === "tui") await ctx.ui.editor("model-modes help", help);
     else console.log(help);
+  };
+
+  const showInit = (ctx: ExtensionContext): void => {
+    const available = ctx.modelRegistry.getAvailable();
+    if (available.length === 0) {
+      ctx.ui.notify("No available models found; configure a provider before running /mode init", "warning");
+      return;
+    }
+    const catalog = available
+      .map((model) => `- ${model.provider}/${model.id} (reasoning: ${model.reasoning ? "yes" : "no"}, context: ${model.contextWindow}, maxOutput: ${model.maxTokens})`)
+      .join("\n");
+    const prompt = [
+      "Design a starter configuration for the model-modes Pi extension.",
+      `The file will be saved at: ${loader.path}`,
+      "",
+      "Available models (only use models from this exact list):",
+      catalog,
+      "",
+      "Requirements:",
+      '- Produce a JSON document matching this schema: { "version": 1, "defaultMode": string, "cycleShortcut"?: string, "modes": [{ "id": string, "label": string, "provider": string, "model": string, "thinkingLevel": "off"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max", "description"?: string }] }',
+      "- Pick 3-4 modes (e.g. low/medium/high/ultra) spanning a sensible range of cost and depth using only the models listed above.",
+      '- Only use a non-"off" thinkingLevel for a mode whose model has reasoning: yes.',
+      "- Suggest a cycleShortcut (e.g. an unused function key) if reasonable.",
+      "- Respond with exactly one fenced ```json code block containing the document, plus one short sentence telling me to save it to the path above.",
+      "- Do not create, write, or modify any files yourself; only print the JSON for me to save.",
+    ].join("\n");
+    pi.sendUserMessage(prompt, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
   };
 
   if (registeredShortcut) {
@@ -188,8 +221,14 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       const command = args.trim();
       if (command === "doctor") return showDoctor(ctx);
       if (command === "help") return showHelp(ctx);
+      if (command === "init") return showInit(ctx);
       if (!snapshot.ok) {
-        ctx.ui.notify("Model modes unavailable; run /mode doctor", "warning");
+        ctx.ui.notify(
+          snapshot.reason === "missing"
+            ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config, or /mode doctor for details.`
+            : "Model modes configuration is invalid; run /mode doctor for details.",
+          "warning",
+        );
         return;
       }
       if (command === "next") return cycle(ctx, 1);

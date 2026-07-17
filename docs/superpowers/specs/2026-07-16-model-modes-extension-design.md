@@ -433,3 +433,23 @@ Rejected because a wrapper would create multiple configuration sources, package-
 ### Extend Pi's general preset example
 
 Rejected because presets intentionally include tools and prompt instructions, while this extension needs a narrower model-and-effort contract and environment-selected configuration.
+
+## Addendum (post-implementation): Missing-Configuration UX and `/mode init`
+
+After initial implementation and install, a fresh user with no `~/.pi/agent/model-modes.json` saw a generic `Status: ERROR` / raw `ENOENT` message from `/mode doctor`, indistinguishable from an actually-broken configuration. This addendum captures two follow-up decisions and their scope.
+
+### Decision: distinguish "not configured" from "invalid"
+
+`ConfigSnapshot`'s failure variant now carries `reason: "missing" | "invalid"`. `"missing"` means `stat()` on the resolved path failed (no file present or inaccessible); `"invalid"` means the file was read but failed JSON parsing or schema validation. `DoctorReport.status` is now `"OK" | "NOT_CONFIGURED" | "INVALID"` (previously `"OK" | "ERROR"`). User-facing warnings from `/mode`, `/mode <id>`, `/mode next`, and `/mode previous` use a friendlier, distinct message for the missing case that names `/mode init`, and a separate message for genuinely invalid configuration that points at `/mode doctor`. This is a pure messaging/classification change; it does not alter when mode switching is blocked (still blocked whenever `snapshot.ok` is false, for either reason).
+
+### Decision: `/mode init` — model-drafted starter config, still never written by the extension
+
+The constraint "the extension never writes the mapping file" is preserved exactly. `/mode init` is a new reserved subcommand (added to `RESERVED_IDS` in `config.ts`) that:
+
+1. Reads `ctx.modelRegistry.getAvailable()` to get the user's actually configured/authenticated models.
+2. Builds a prompt describing the `model-modes.json` schema, the resolved target path, and the available model catalog, asking the running agent to pick a sensible spread of modes using only listed models and to reply with exactly one fenced ` ```json ` block plus a one-line save instruction, and explicitly instructing the agent not to create, write, or modify any file itself.
+3. Delivers that prompt via `pi.sendUserMessage(...)`, i.e. as a normal user turn processed by whatever model/session is currently active — no direct LLM API call is made by the extension, and no separate inference dependency or credential is introduced.
+
+This keeps "no production path may write/mutate the mapping file" true at the extension-code level: the extension's own code contains no `writeFile`/`appendFile`/`fs.write` call on the config path, matching all prior tasks. The generated suggestion is plain chat output the user must manually save; nothing at the extension layer persists it. (It is possible for the agent's own turn to subsequently use a general-purpose file-write tool if the user asks it to — that would be the same as the user asking Pi to write any other file, and is intentionally outside this extension's control surface, exactly as it was before this addendum for any other file in the user's project.)
+
+This was scoped as a single follow-up task (not part of the original six-task plan) and was implemented and reviewed after the branch's final whole-branch review had already approved the original six tasks.

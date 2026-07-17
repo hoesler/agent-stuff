@@ -9,7 +9,7 @@ import {
   type ThinkingLevel,
 } from "./types.ts";
 
-const RESERVED_IDS = new Set(["next", "previous", "doctor", "help"]);
+const RESERVED_IDS = new Set(["next", "previous", "doctor", "help", "init"]);
 const SHORTCUT = /^(?:(?:ctrl|shift|alt)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-2])|escape|enter|tab|space|backspace|delete|home|end|pageUp|pageDown|up|down|left|right)$/i;
 const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "modes"]);
 const MODE_KEYS = new Set(["id", "label", "provider", "model", "thinkingLevel", "description"]);
@@ -115,16 +115,30 @@ export class ModeConfigLoader {
       path,
       fromEnvironment,
       fingerprint: "unread",
+      reason: "missing",
       errors: [{ path: "root", message: "configuration has not been loaded" }],
     };
   }
 
   public async refresh(force = false): Promise<ConfigSnapshot> {
     let fingerprint = "missing";
+    let info: Awaited<ReturnType<typeof stat>>;
     try {
-      const info = await stat(this.path);
-      fingerprint = `${info.mtimeMs}:${info.size}`;
-      if (!force && fingerprint === this.current.fingerprint) return this.current;
+      info = await stat(this.path);
+    } catch {
+      this.current = {
+        ok: false,
+        path: this.path,
+        fromEnvironment: this.fromEnvironment,
+        fingerprint,
+        reason: "missing",
+        errors: [{ path: "root", message: `no configuration file found at "${this.path}"` }],
+      };
+      return this.current;
+    }
+    fingerprint = `${info.mtimeMs}:${info.size}`;
+    if (!force && fingerprint === this.current.fingerprint) return this.current;
+    try {
       const parsed = parseModeConfig(JSON.parse(await readFile(this.path, "utf8")));
       this.current = {
         ok: true,
@@ -139,6 +153,7 @@ export class ModeConfigLoader {
         path: this.path,
         fromEnvironment: this.fromEnvironment,
         fingerprint,
+        reason: "invalid",
         errors: [error(this.path, cause)],
       };
     }

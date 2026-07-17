@@ -64,7 +64,7 @@ test("parser rejects all invalid input instead of loading a subset", () => {
     () => parseModeConfig({ ...valid, modes: [valid.modes[0], valid.modes[0]] }),
     /duplicate mode id "medium"/,
   );
-  for (const id of ["next", "previous", "doctor", "help", "two words"]) {
+  for (const id of ["next", "previous", "doctor", "help", "init", "two words"]) {
     assert.throws(
       () => parseModeConfig({ ...valid, defaultMode: id, modes: [{ ...valid.modes[0], id }] }),
       /reserved|whitespace/,
@@ -116,12 +116,18 @@ test("loader reports missing files and invalid JSON at root", async () => {
     const loader = new ModeConfigLoader(path, false);
     const missing = await loader.refresh(true);
     assert.equal(missing.ok, false);
-    if (!missing.ok) assert.equal(missing.errors[0]?.path, "root");
+    if (!missing.ok) {
+      assert.equal(missing.errors[0]?.path, "root");
+      assert.equal(missing.reason, "missing");
+    }
 
     await writeFile(path, "{");
     const invalidJson = await loader.refresh(true);
     assert.equal(invalidJson.ok, false);
-    if (!invalidJson.ok) assert.equal(invalidJson.errors[0]?.path, "root");
+    if (!invalidJson.ok) {
+      assert.equal(invalidJson.errors[0]?.path, "root");
+      assert.equal(invalidJson.reason, "invalid");
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -44,6 +44,7 @@ export type ConfigSnapshot =
       path: string;
       fromEnvironment: boolean;
       fingerprint: string;
+      reason: "missing" | "invalid";
       errors: ConfigError[];
     };
 

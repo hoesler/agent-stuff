@@ -20,10 +20,12 @@ function model(id: string, reasoning = true): Model<Api> {
   return { id, name: id, api: "test", provider: "test", baseUrl: "https://example.test", reasoning, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1, maxTokens: 1 };
 }
 
-async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut?: string; available?: string[]; mode?: "tui" | "print"; configText?: string } = {}) {
+async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut?: string; available?: string[]; mode?: "tui" | "print"; configText?: string; missingFile?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "model-modes-"));
   const path = join(directory, "modes.json");
-  await writeFile(path, options.configText ?? JSON.stringify({ version: 1, defaultMode: options.defaultMode ?? "low", cycleShortcut: options.shortcut ?? "f8", modes: options.modes ?? baseModes }));
+  if (!options.missingFile) {
+    await writeFile(path, options.configText ?? JSON.stringify({ version: 1, defaultMode: options.defaultMode ?? "low", cycleShortcut: options.shortcut ?? "f8", modes: options.modes ?? baseModes }));
+  }
   const previousPath = process.env.PI_MODEL_MODES_CONFIG;
   process.env.PI_MODEL_MODES_CONFIG = path;
   const commands = new Map<string, { handler: Handler }>();
@@ -38,11 +40,13 @@ async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut
   const statuses: string[] = [];
   const editors: Array<[string, string | undefined]> = [];
   let customCalls = 0;
+  const userMessages: Array<[string, { deliverAs?: "steer" | "followUp" } | undefined]> = [];
   const context = {
     mode: options.mode ?? "tui",
     modelRegistry: { find: (provider: string, id: string) => models.get(`${provider}/${id}`), getAvailable: () => [...models.values()] },
     get model() { return current; },
     sessionManager: { getEntries: () => [] },
+    isIdle: () => true,
     ui: {
       theme: { fg: (_color: string, text: string) => text, bold: (text: string) => text },
       setStatus: (_key: string, text: string) => statuses.push(text),
@@ -57,6 +61,7 @@ async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut
     registerShortcut: (shortcut: string, value: { handler: Handler }) => shortcuts.set(shortcut, value),
     getThinkingLevel: () => thinking,
     setThinkingLevel: (level: ThinkingLevel) => setThinking(level),
+    sendUserMessage: (content: string, sendOptions?: { deliverAs?: "steer" | "followUp" }) => { userMessages.push([content, sendOptions]); },
     setModel: async (target: Model<Api>) => {
       const accepted = await setModelBehavior(target);
       if (accepted) current = target;
@@ -65,7 +70,7 @@ async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut
   } as unknown as ExtensionAPI;
   await modelModesExtension(api);
   const restore = () => { if (previousPath === undefined) delete process.env.PI_MODEL_MODES_CONFIG; else process.env.PI_MODEL_MODES_CONFIG = previousPath; };
-  return { path, commands, shortcuts, events, context, models, notifications, statuses, editors, get thinking() { return thinking; }, get current() { return current; }, setModel: (fn: (target: Model<Api>) => Promise<boolean>) => { setModelBehavior = fn; }, setThinkingBehavior: (fn: (level: ThinkingLevel) => void) => { setThinking = fn; }, setThinking: (level: ThinkingLevel) => { thinking = level; }, customCalls: () => customCalls, restore };
+  return { path, commands, shortcuts, events, context, models, notifications, statuses, editors, userMessages, get thinking() { return thinking; }, get current() { return current; }, setModel: (fn: (target: Model<Api>) => Promise<boolean>) => { setModelBehavior = fn; }, setThinkingBehavior: (fn: (level: ThinkingLevel) => void) => { setThinking = fn; }, setThinking: (level: ThinkingLevel) => { thinking = level; }, customCalls: () => customCalls, restore };
 }
 
 test("registers the mode command, configured shortcut, and state events", async () => {
@@ -127,7 +132,7 @@ test("help includes resolved configuration path and all subcommands", async () =
   try {
     await h.commands.get("mode")!.handler("help", h.context);
     const text = h.editors[0]![1]!;
-    for (const command of ["next", "previous", "doctor", "help", h.path]) assert.match(text, new RegExp(command));
+    for (const command of ["next", "previous", "doctor", "init", "help", h.path]) assert.match(text, new RegExp(command));
   } finally { h.restore(); }
 });
 
@@ -203,6 +208,38 @@ test("invalid configuration publishes error status and blocks switches", async (
     await h.commands.get("mode")!.handler("high", h.context);
     assert.equal(h.current?.id, "low");
     assert.equal(h.statuses.at(-1), "mode:error");
-    assert.match(h.notifications.at(-1)![0], /unavailable/);
+    assert.match(h.notifications.at(-1)![0], /invalid/);
+  } finally { h.restore(); }
+});
+
+test("missing configuration file gives a distinct not-configured message pointing at /mode init", async () => {
+  const h = await harness({ missingFile: true });
+  try {
+    await h.commands.get("mode")!.handler("high", h.context);
+    assert.equal(h.current?.id, "low");
+    assert.match(h.notifications.at(-1)![0], /No mode configuration found/);
+    assert.match(h.notifications.at(-1)![0], /\/mode init/);
+  } finally { h.restore(); }
+});
+
+test("mode init sends the model a prompt listing available models and never writes the config file", async () => {
+  const h = await harness({ missingFile: true, available: ["low", "high"] });
+  try {
+    await h.commands.get("mode")!.handler("init", h.context);
+    assert.equal(h.userMessages.length, 1);
+    const [content] = h.userMessages[0]!;
+    assert.match(content, /test\/low/);
+    assert.match(content, /test\/high/);
+    assert.match(content, /```json/);
+    assert.match(content, new RegExp(h.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(content, /do not create, write, or modify any files/i);
+  } finally { h.restore(); }
+});
+
+test("mode init still works when the configuration is missing or invalid", async () => {
+  const h = await harness({ configText: "{}" });
+  try {
+    await h.commands.get("mode")!.handler("init", h.context);
+    assert.equal(h.userMessages.length, 1);
   } finally { h.restore(); }
 });

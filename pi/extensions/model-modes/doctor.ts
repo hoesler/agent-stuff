@@ -7,7 +7,7 @@ export interface DoctorRegistry {
 }
 
 export interface DoctorReport {
-  status: "OK" | "ERROR";
+  status: "OK" | "NOT_CONFIGURED" | "INVALID";
   source: string;
   fromEnvironment: boolean;
   defaultMode?: string;
@@ -25,7 +25,7 @@ export function inspectConfig(
 ): DoctorReport {
   if (!snapshot.ok) {
     return {
-      status: "ERROR",
+      status: snapshot.reason === "missing" ? "NOT_CONFIGURED" : "INVALID",
       source: snapshot.path,
       fromEnvironment: snapshot.fromEnvironment,
       registeredShortcut,
@@ -56,7 +56,7 @@ export function inspectConfig(
   }
 
   return {
-    status: issues.length === 0 ? "OK" : "ERROR",
+    status: issues.length === 0 ? "OK" : "INVALID",
     source: snapshot.path,
     fromEnvironment: snapshot.fromEnvironment,
     defaultMode: snapshot.config.defaultMode,
@@ -85,6 +85,9 @@ export function formatDoctorReport(report: DoctorReport): string {
     lines.push("Shortcut: disabled");
   }
   lines.push("", report.issues.length === 0 ? "Issues: none" : `Issues:\n- ${report.issues.join("\n- ")}`);
+  if (report.status === "NOT_CONFIGURED") {
+    lines.push("", "Run /mode init to generate a starter configuration from your available models.");
+  }
   return `${lines.join("\n")}\n`;
 }
 

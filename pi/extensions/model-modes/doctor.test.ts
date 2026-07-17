@@ -38,11 +38,25 @@ test("doctor prints load errors without pretending config is usable", () => {
     path: "/tmp/modes.json",
     fromEnvironment: false,
     fingerprint: "missing",
+    reason: "invalid",
     errors: [{ path: "root", message: "invalid JSON" }],
   }, { find: () => undefined, available: () => [] }, undefined));
-  assert.match(report, /Status: ERROR/);
+  assert.match(report, /Status: INVALID/);
   assert.match(report, /invalid JSON/);
   assert.doesNotMatch(report, /Default:/);
+});
+
+test("doctor distinguishes a missing configuration file from an invalid one", () => {
+  const report = formatDoctorReport(inspectConfig({
+    ok: false,
+    path: "/tmp/modes.json",
+    fromEnvironment: false,
+    fingerprint: "missing",
+    reason: "missing",
+    errors: [{ path: "root", message: 'no configuration file found at "/tmp/modes.json"' }],
+  }, { find: () => undefined, available: () => [] }, undefined));
+  assert.match(report, /Status: NOT_CONFIGURED/);
+  assert.match(report, /Run \/mode init to generate a starter configuration/);
 });
 
 test("doctor reports non-reasoning and unsupported thinking levels via preflight", () => {
