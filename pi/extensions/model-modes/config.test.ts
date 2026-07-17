@@ -80,10 +80,17 @@ test("parser reports exact paths for additional invalid documents", () => {
     [{ ...valid, modes: [{ ...valid.modes[0], provider: "  " }] }, /root\.modes\[0\]\.provider/],
     [{ ...valid, modes: [{ ...valid.modes[0], thinkingLevel: "extreme" }] }, /root\.modes\[0\]\.thinkingLevel/],
     [{ ...valid, cycleShortcut: "cmd+k" }, /root\.cycleShortcut/],
+    [{ ...valid, exposeCatalogInSystemPrompt: "true" }, /root\.exposeCatalogInSystemPrompt/],
   ];
   for (const [document, path] of rejected) {
     assert.throws(() => parseModeConfig(document), path);
   }
+});
+
+test("exposeCatalogInSystemPrompt defaults to absent and can be enabled", () => {
+  assert.equal(parseModeConfig(valid).exposeCatalogInSystemPrompt, undefined);
+  assert.equal(parseModeConfig({ ...valid, exposeCatalogInSystemPrompt: true }).exposeCatalogInSystemPrompt, true);
+  assert.equal(parseModeConfig({ ...valid, exposeCatalogInSystemPrompt: false }).exposeCatalogInSystemPrompt, false);
 });
 
 test("loader disables stale config and recovers after the file is fixed", async () => {

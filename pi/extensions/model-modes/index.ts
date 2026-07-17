@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, type KeyId, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 import { applyMode, type ApplyRuntime } from "./apply-mode.ts";
+import { formatModeCatalog } from "./catalog.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
 import { cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
@@ -262,5 +263,11 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
 
   pi.on("thinking_level_select", async (_event, ctx) => {
     if (!applying) updateStatus(ctx);
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    const snapshot = await refresh(ctx);
+    if (!snapshot.ok || !snapshot.config.exposeCatalogInSystemPrompt) return undefined;
+    return { systemPrompt: `${event.systemPrompt}\n\n${formatModeCatalog(snapshot.config)}` };
   });
 }

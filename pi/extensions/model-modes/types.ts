@@ -23,6 +23,7 @@ export interface ModeConfig {
   version: 1;
   defaultMode: string;
   cycleShortcut?: string;
+  exposeCatalogInSystemPrompt?: boolean;
   modes: ModeDefinition[];
 }
 

@@ -11,7 +11,7 @@ import {
 
 const RESERVED_IDS = new Set(["next", "previous", "doctor", "help", "init"]);
 const SHORTCUT = /^(?:(?:ctrl|shift|alt)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-2])|escape|enter|tab|space|backspace|delete|home|end|pageUp|pageDown|up|down|left|right)$/i;
-const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "modes"]);
+const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "exposeCatalogInSystemPrompt", "modes"]);
 const MODE_KEYS = new Set(["id", "label", "provider", "model", "thinkingLevel", "description"]);
 
 export interface ConfigPathOptions {
@@ -38,6 +38,13 @@ function requiredString(value: unknown, path: string): string {
     throw new Error(`${path}: expected non-empty string`);
   }
   return value.trim();
+}
+
+function requiredBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${path}: expected boolean`);
+  }
+  return value;
 }
 
 function rejectUnknown(input: Record<string, unknown>, allowed: Set<string>, path: string): void {
@@ -91,7 +98,16 @@ export function parseModeConfig(value: unknown): ModeConfig {
   if (cycleShortcut !== undefined && !SHORTCUT.test(cycleShortcut)) {
     throw new Error("root.cycleShortcut: invalid Pi shortcut");
   }
-  return { version: 1, defaultMode, ...(cycleShortcut ? { cycleShortcut } : {}), modes };
+  const exposeCatalogInSystemPrompt = input.exposeCatalogInSystemPrompt === undefined
+    ? undefined
+    : requiredBoolean(input.exposeCatalogInSystemPrompt, "root.exposeCatalogInSystemPrompt");
+  return {
+    version: 1,
+    defaultMode,
+    ...(cycleShortcut ? { cycleShortcut } : {}),
+    ...(exposeCatalogInSystemPrompt !== undefined ? { exposeCatalogInSystemPrompt } : {}),
+    modes,
+  };
 }
 
 function error(_filePath: string, cause: unknown): ConfigError {

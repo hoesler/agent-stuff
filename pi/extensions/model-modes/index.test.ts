@@ -285,3 +285,31 @@ test("mode init still works when the configuration is missing or invalid", async
     assert.equal(h.userMessages.length, 1);
   } finally { h.restore(); }
 });
+
+test("before_agent_start does not inject a catalog when exposeCatalogInSystemPrompt is unset", async () => {
+  const h = await harness();
+  try {
+    const result = await h.events.get("before_agent_start")!({ prompt: "hi", systemPrompt: "base prompt" }, h.context);
+    assert.equal(result, undefined);
+  } finally { h.restore(); }
+});
+
+test("before_agent_start appends the mode catalog when exposeCatalogInSystemPrompt is enabled", async () => {
+  const h = await harness({
+    configText: JSON.stringify({ version: 1, defaultMode: "low", exposeCatalogInSystemPrompt: true, modes: baseModes }),
+  });
+  try {
+    const result = await h.events.get("before_agent_start")!({ prompt: "hi", systemPrompt: "base prompt" }, h.context) as unknown as { systemPrompt: string };
+    assert.match(result.systemPrompt, /^base prompt\n\n## Available model modes/);
+    assert.match(result.systemPrompt, /`low` → `test\/low:low`/);
+    assert.match(result.systemPrompt, /`high` → `test\/high:high` — Careful/);
+  } finally { h.restore(); }
+});
+
+test("before_agent_start injects nothing when the enabled configuration is invalid", async () => {
+  const h = await harness({ configText: "{}" });
+  try {
+    const result = await h.events.get("before_agent_start")!({ prompt: "hi", systemPrompt: "base prompt" }, h.context);
+    assert.equal(result, undefined);
+  } finally { h.restore(); }
+});
