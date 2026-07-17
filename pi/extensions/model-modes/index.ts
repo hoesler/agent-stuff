@@ -51,7 +51,10 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       thinkingLevel: pi.getThinkingLevel() as ThinkingLevel,
     });
     const label = active.kind === "named" ? active.mode.id : active.kind;
-    ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}`));
+    const modelId = ctx.model?.id;
+    const level = pi.getThinkingLevel();
+    const detail = active.kind !== "error" && modelId ? ` (${modelId} · thinking:${level})` : "";
+    ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
   };
 
   const activate = async (ctx: ExtensionContext, mode: ModeDefinition, quiet = false) => {
@@ -73,7 +76,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     }
     updateStatus(ctx);
     if (!quiet) {
-      if (result.ok) ctx.ui.notify(`Mode: ${mode.label}${mode.description ? ` — ${mode.description}` : ""}`, "info");
+      if (result.ok) ctx.ui.notify(`Mode: ${mode.label}`, "info");
       else ctx.ui.notify(`Mode ${mode.id} failed: ${result.message}`, "warning");
     }
     return result;
@@ -111,7 +114,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     for (const mode of cycleOrder(snapshot.config, active, direction)) {
       const result = await activate(ctx, mode, true);
       if (result.ok) {
-        ctx.ui.notify(`Mode: ${mode.label}${mode.description ? ` — ${mode.description}` : ""}`, "info");
+        ctx.ui.notify(`Mode: ${mode.label}`, "info");
         return;
       }
       failures.push(`${mode.id}: ${result.message}`);

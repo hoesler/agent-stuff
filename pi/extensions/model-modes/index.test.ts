@@ -93,6 +93,16 @@ test("direct mode selection applies the requested mode", async () => {
   } finally { h.restore(); }
 });
 
+test("status combines mode id with the active model and thinking level, and the switch toast omits the description", async () => {
+  const h = await harness();
+  try {
+    await h.commands.get("mode")!.handler("high", h.context);
+    assert.equal(h.statuses.at(-1), "mode:high (high · thinking:high)");
+    assert.equal(h.notifications.at(-1)![0], "Mode: High");
+    assert.doesNotMatch(h.notifications.at(-1)![0], /Careful/);
+  } finally { h.restore(); }
+});
+
 test("cycling skips unavailable models and supports reverse order", async () => {
   const h = await harness({ modes: [...baseModes, { id: "missing", provider: "test", model: "missing", thinkingLevel: "medium" }] });
   try {
@@ -157,7 +167,7 @@ test("intermediate selection events while applying do not publish transient stat
       return target.id === "high";
     });
     await h.commands.get("mode")!.handler("high", h.context);
-    assert.equal(h.statuses.at(-1), "mode:high");
+    assert.match(h.statuses.at(-1)!, /^mode:high /);
   } finally { h.restore(); }
 });
 
@@ -170,7 +180,7 @@ test("thrown thinking-level application clears applying before later selection e
     const before = h.statuses.length;
     await h.events.get("thinking_level_select")!({}, h.context);
     assert.equal(h.statuses.length, before + 1);
-    assert.equal(h.statuses.at(-1), "mode:custom");
+    assert.match(h.statuses.at(-1)!, /^mode:custom/);
   } finally { h.restore(); }
 });
 
@@ -180,10 +190,10 @@ test("manual selections publish custom status unless exact triple matches", asyn
     h.setThinking("medium");
     await h.events.get("model_select")!({}, h.context);
     await h.events.get("thinking_level_select")!({}, h.context);
-    assert.equal(h.statuses.at(-1), "mode:custom");
+    assert.match(h.statuses.at(-1)!, /^mode:custom/);
     h.setThinking("low");
     await h.events.get("thinking_level_select")!({}, h.context);
-    assert.equal(h.statuses.at(-1), "mode:low");
+    assert.match(h.statuses.at(-1)!, /^mode:low /);
   } finally { h.restore(); }
 });
 

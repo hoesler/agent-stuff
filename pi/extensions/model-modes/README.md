@@ -80,6 +80,12 @@ Mapping edits are detected before the next command or shortcut action. Changing 
 
 `defaultMode` applies only to fresh startup and `/new` sessions. Resumed, forked, and reloaded sessions keep their Pi state. `mode:custom` means the actual provider/model/thinking triple does not exactly match a configured mode.
 
+## Status indicator
+
+The footer status combines the active mode id with the currently active model and thinking level, e.g. `mode:high (gpt-5.6-sol · thinking:high)`. It reads `mode:custom (...)` when the live provider/model/thinking triple does not exactly match any configured mode, and just `mode:error` (no model detail) when the configuration itself is missing or invalid.
+
+Mode descriptions are shown in the `/mode` picker list (and its non-interactive `/mode` listing), not in the status line or in the toast shown when a mode is applied.
+
 ## Doctor statuses
 
 - `OK` — configuration is valid and every mode's model is currently available.
