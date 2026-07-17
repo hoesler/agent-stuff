@@ -10,6 +10,7 @@ import { applyMode, type ApplyRuntime } from "./apply-mode.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
 import { cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
+import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
 export default async function modelModesExtension(pi: ExtensionAPI): Promise<void> {
@@ -21,6 +22,12 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const registeredShortcut = initial.ok ? initial.config.cycleShortcut : undefined;
   let active: ActiveMode = { kind: "error" };
   let applying = false;
+
+  registerAmpEditorStatusHook(() => {
+    if (active.kind === "named") return `mode:${active.mode.id}`;
+    if (active.kind === "custom") return "mode:custom";
+    return undefined;
+  });
 
   const asModeModel = (model: Model<Api>): ModeModel => ({
     provider: model.provider,

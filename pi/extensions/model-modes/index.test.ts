@@ -11,6 +11,15 @@ import type { ThinkingLevel } from "./types.ts";
 type Handler = (...args: any[]) => Promise<void> | void;
 type Mode = { id: string; label?: string; provider?: string; model?: string; thinkingLevel?: ThinkingLevel; description?: string };
 
+function ampEditorHooks(): Set<() => string | undefined> {
+  return (globalThis as unknown as { __ampEditorStatusHooks?: Set<() => string | undefined> }).__ampEditorStatusHooks ?? new Set();
+}
+
+function latestAmpEditorHook(before: Set<() => string | undefined>): () => string | undefined {
+  for (const hook of ampEditorHooks()) if (!before.has(hook)) return hook;
+  throw new Error("expected a new amp-editor status hook to be registered");
+}
+
 const baseModes: Mode[] = [
   { id: "low", label: "Low", provider: "test", model: "low", thinkingLevel: "low" },
   { id: "high", label: "High", provider: "test", model: "high", thinkingLevel: "high", description: "Careful" },
@@ -100,6 +109,29 @@ test("status combines mode id with the active model and thinking level, and the 
     assert.equal(h.statuses.at(-1), "mode:high (high · thinking:high)");
     assert.equal(h.notifications.at(-1)![0], "Mode: High");
     assert.doesNotMatch(h.notifications.at(-1)![0], /Careful/);
+  } finally { h.restore(); }
+});
+
+test("registers an amp-editor status hook that mirrors the active mode for named, custom, and error states", async () => {
+  const before = new Set(ampEditorHooks());
+  const h = await harness();
+  try {
+    const hook = latestAmpEditorHook(before);
+    await h.commands.get("mode")!.handler("high", h.context);
+    assert.equal(hook(), "mode:high");
+    h.setThinking("medium");
+    await h.events.get("thinking_level_select")!({}, h.context);
+    assert.equal(hook(), "mode:custom");
+  } finally { h.restore(); }
+});
+
+test("amp-editor status hook reports nothing when configuration is invalid", async () => {
+  const before = new Set(ampEditorHooks());
+  const h = await harness({ configText: "{}" });
+  try {
+    const hook = latestAmpEditorHook(before);
+    await h.commands.get("mode")!.handler("high", h.context);
+    assert.equal(hook(), undefined);
   } finally { h.restore(); }
 });
 

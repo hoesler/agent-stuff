@@ -86,6 +86,12 @@ The footer status combines the active mode id with the currently active model an
 
 Mode descriptions are shown in the `/mode` picker list (and its non-interactive `/mode` listing), not in the status line or in the toast shown when a mode is applied.
 
+### Custom editors/themes that replace the built-in footer (e.g. amp-themes)
+
+`ctx.ui.setStatus()` only renders through Pi's built-in footer. Some themes (e.g. [`amp-themes`](https://github.com/hoesler/amp-themes)) draw their own editor chrome, blank the built-in footer entirely, and show their own model/thinking indicator instead — so the status above never appears there.
+
+To cover that case, this extension also publishes the active mode label (bare `mode:<id>` or `mode:custom`; nothing while the configuration is missing/invalid) through a tiny, dependency-free contract: a shared `Set` of callbacks on `globalThis.__ampEditorStatusHooks`. Any consuming extension can read it without depending on this package. See `amp-themes`' README for the exact shape it expects and where it renders the label.
+
 ## Doctor statuses
 
 - `OK` — configuration is valid and every mode's model is currently available.
