@@ -96,15 +96,15 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     await activate(ctx, mode);
   };
 
+  const unavailableMessage = (snapshot: Extract<ConfigSnapshot, { ok: false }>): string =>
+    snapshot.reason === "missing"
+      ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config, or /mode doctor for details.`
+      : "Model modes configuration is invalid; run /mode doctor for details.";
+
   const cycle = async (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => {
     const snapshot = await refresh(ctx);
     if (!snapshot.ok) {
-      ctx.ui.notify(
-        snapshot.reason === "missing"
-          ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config.`
-          : "Model modes configuration is invalid; run /mode doctor for details.",
-        "warning",
-      );
+      ctx.ui.notify(unavailableMessage(snapshot), "warning");
       return;
     }
     const failures: string[] = [];
@@ -223,12 +223,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       if (command === "help") return showHelp(ctx);
       if (command === "init") return showInit(ctx);
       if (!snapshot.ok) {
-        ctx.ui.notify(
-          snapshot.reason === "missing"
-            ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config, or /mode doctor for details.`
-            : "Model modes configuration is invalid; run /mode doctor for details.",
-          "warning",
-        );
+        ctx.ui.notify(unavailableMessage(snapshot), "warning");
         return;
       }
       if (command === "next") return cycle(ctx, 1);
