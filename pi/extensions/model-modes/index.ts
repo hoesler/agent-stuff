@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   DynamicBorder,
@@ -15,6 +18,18 @@ import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
 export default async function modelModesExtension(pi: ExtensionAPI): Promise<void> {
+  const instanceId = Math.random().toString(36).slice(2, 8);
+  const debugLog = (line: string): void => {
+    if (!process.env.PI_MODEL_MODES_DEBUG) return;
+    try {
+      appendFileSync(join(homedir(), ".pi", "agent", "model-modes-debug.log"), `${new Date().toISOString()} [pid=${process.pid} instance=${instanceId}] ${line}\n`);
+    } catch {
+      // ignore debug logging failures
+    }
+  };
+
+  debugLog("extension activated");
+
   const startupCwd = process.cwd();
   const envPath = process.env.PI_MODEL_MODES_CONFIG;
   const path = resolveConfigPath({ envPath, startupCwd, agentDir: getAgentDir() });
@@ -23,6 +38,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const registeredShortcut = initial.ok ? initial.config.cycleShortcut : undefined;
   let active: ActiveMode = { kind: "error" };
   let applying = false;
+  let lastEventCtx: ExtensionContext | undefined;
   // Serialize cycle/activate calls so overlapping invocations (e.g. rapid
   // shortcut presses, which the TUI dispatches fire-and-forget without
   // awaiting the previous handler) can never interleave their model/thinking
@@ -44,11 +60,16 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   // making the status line repeat "mode:<id>" once per accumulated instance.
   // Unregister any hook left behind by a previous activation before adding ours.
   const statusHookRegistry = globalThis as typeof globalThis & { __modelModesStatusHookUnregister?: () => void };
+  debugLog(`registering status hook, previous slot owner unregistering=${Boolean(statusHookRegistry.__modelModesStatusHookUnregister)}`);
   statusHookRegistry.__modelModesStatusHookUnregister?.();
+  let lastHookLabel: string | undefined;
   statusHookRegistry.__modelModesStatusHookUnregister = registerAmpEditorStatusHook(() => {
-    if (active.kind === "named") return `mode:${active.mode.id}`;
-    if (active.kind === "custom") return "mode:custom";
-    return undefined;
+    const label = active.kind === "named" ? `mode:${active.mode.id}` : active.kind === "custom" ? "mode:custom" : undefined;
+    if (label !== lastHookLabel) {
+      debugLog(`status hook label changed: ${lastHookLabel} -> ${label}`);
+      lastHookLabel = label;
+    }
+    return label;
   });
 
   const asModeModel = (model: Model<Api>): ModeModel => ({
@@ -67,18 +88,36 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     getThinkingLevel: () => pi.getThinkingLevel() as ThinkingLevel,
     setModel: async (model) => {
       const target = ctx.modelRegistry.find(model.provider, model.id);
-      return target ? pi.setModel(target) : false;
+      debugLog(`runtime.setModel called: requested=${model.provider}/${model.id} found=${target ? `${target.provider}/${target.id}` : "undefined"}`);
+      if (!target) return false;
+      const result = await pi.setModel(target);
+      debugLog(
+        `runtime.setModel result: ${result} liveModelAfter(outerCtx)=${ctx.model?.provider}/${ctx.model?.id} ` +
+          `liveModelAfter(lastEventCtx)=${lastEventCtx?.model?.provider}/${lastEventCtx?.model?.id} ` +
+          `sameCtxObject=${ctx === lastEventCtx}`,
+      );
+      return result;
     },
-    setThinkingLevel: (level) => pi.setThinkingLevel(level),
+    setThinkingLevel: (level) => {
+      debugLog(`runtime.setThinkingLevel called: requested=${level} liveModelAtCallTime=${ctx.model?.provider}/${ctx.model?.id}`);
+      pi.setThinkingLevel(level);
+      debugLog(`runtime.setThinkingLevel done: liveLevelAfter=${pi.getThinkingLevel()}`);
+    },
   });
 
-  const updateStatus = (ctx: ExtensionContext, snapshot: ConfigSnapshot = loader.current): void => {
+  const updateStatus = (ctx: ExtensionContext, snapshot: ConfigSnapshot = loader.current, source = "unknown"): void => {
     if (!snapshot.ok) active = { kind: "error" };
-    else active = inferActiveMode(snapshot.config, {
-      provider: ctx.model?.provider,
-      model: ctx.model?.id,
-      thinkingLevel: pi.getThinkingLevel() as ThinkingLevel,
-    });
+    else {
+      const selection = {
+        provider: ctx.model?.provider,
+        model: ctx.model?.id,
+        thinkingLevel: pi.getThinkingLevel() as ThinkingLevel,
+      };
+      active = inferActiveMode(snapshot.config, selection);
+      debugLog(
+        `updateStatus[source=${source}, applying=${applying}] selection=${JSON.stringify(selection)} modes=${JSON.stringify(snapshot.config.modes.map((m) => ({ id: m.id, provider: m.provider, model: m.model, thinkingLevel: m.thinkingLevel })))} -> ${active.kind}`,
+      );
+    }
     const label = active.kind === "named" ? active.mode.id : active.kind;
     const modelId = ctx.model?.id;
     const level = pi.getThinkingLevel();
@@ -103,7 +142,20 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     } finally {
       applying = false;
     }
-    updateStatus(ctx);
+    updateStatus(ctx, undefined, "activate");
+    if (process.env.PI_MODEL_MODES_DEBUG && result.ok) {
+      // Double-set probe: call setModel again with the SAME target we just applied.
+      // session.setModel() computes `previousModel = this.model` (a session-internal
+      // read, independent of our ctx) at the very start of the call. If that still
+      // reports the OLD model here, the write path itself never landed (or got
+      // reverted) -- if it reports the model we just applied, the write succeeded
+      // and only OUR read of ctx.model is stale/wrong.
+      const probeTarget = ctx.modelRegistry.find(mode.provider, mode.model);
+      if (probeTarget) {
+        debugLog(`probe: re-issuing setModel(${mode.provider}/${mode.model}) to inspect session-internal previousModel via the resulting event`);
+        await pi.setModel(probeTarget);
+      }
+    }
     if (!quiet) {
       if (result.ok) ctx.ui.notify(`Mode: ${mode.label}`, "info");
       else ctx.ui.notify(`Mode ${mode.id} failed: ${result.message}`, "warning");
@@ -113,7 +165,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
 
   const refresh = async (ctx: ExtensionContext): Promise<ConfigSnapshot> => {
     const snapshot = await loader.refresh();
-    updateStatus(ctx, snapshot);
+    updateStatus(ctx, snapshot, "refresh");
     return snapshot;
   };
 
@@ -283,19 +335,28 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
 
   pi.on("session_start", async (event, ctx) => {
     const snapshot = await loader.refresh();
-    updateStatus(ctx, snapshot);
+    updateStatus(ctx, snapshot, "session_start");
     if (snapshot.ok && isFreshSession(event, ctx.sessionManager.getEntries())) {
       const mode = snapshot.config.modes.find((item) => item.id === snapshot.config.defaultMode)!;
       await serialize(() => activate(ctx, mode));
     }
   });
 
-  pi.on("model_select", async (_event, ctx) => {
-    if (!applying) updateStatus(ctx);
+  pi.on("model_select", async (event, ctx) => {
+    lastEventCtx = ctx;
+    const modelSelectEvent = event as { model?: { provider?: string; id?: string }; previousModel?: { provider?: string; id?: string } };
+    debugLog(
+      `event model_select applying=${applying} payload=${JSON.stringify(event)} ` +
+        `ctxModelDuringHandler=${ctx.model?.provider}/${ctx.model?.id} ` +
+        `ctxModelIsPayloadModel=${ctx.model === modelSelectEvent.model} ` +
+        `ctxModelIsPayloadPrevious=${ctx.model === modelSelectEvent.previousModel}`,
+    );
+    if (!applying) updateStatus(ctx, undefined, "event:model_select");
   });
 
-  pi.on("thinking_level_select", async (_event, ctx) => {
-    if (!applying) updateStatus(ctx);
+  pi.on("thinking_level_select", async (event, ctx) => {
+    debugLog(`event thinking_level_select applying=${applying} payload=${JSON.stringify(event)}`);
+    if (!applying) updateStatus(ctx, undefined, "event:thinking_level_select");
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
