@@ -39,7 +39,13 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     return run;
   };
 
-  registerAmpEditorStatusHook(() => {
+  // Registering again on every activation (reload, resume, fork, new window,
+  // etc.) would otherwise accumulate duplicate hooks in the shared global set,
+  // making the status line repeat "mode:<id>" once per accumulated instance.
+  // Unregister any hook left behind by a previous activation before adding ours.
+  const statusHookRegistry = globalThis as typeof globalThis & { __modelModesStatusHookUnregister?: () => void };
+  statusHookRegistry.__modelModesStatusHookUnregister?.();
+  statusHookRegistry.__modelModesStatusHookUnregister = registerAmpEditorStatusHook(() => {
     if (active.kind === "named") return `mode:${active.mode.id}`;
     if (active.kind === "custom") return "mode:custom";
     return undefined;

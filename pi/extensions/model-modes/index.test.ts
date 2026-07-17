@@ -135,6 +135,24 @@ test("amp-editor status hook reports nothing when configuration is invalid", asy
   } finally { h.restore(); }
 });
 
+test("BUG: repeated extension activation does not accumulate duplicate amp-editor status hooks", async () => {
+  // Extension activation can happen more than once per process (reload,
+  // resume/fork, additional windows sharing the process, etc). Each
+  // activation used to register a brand-new hook and never clean up the
+  // previous one, so the shared global set grew unbounded and the status
+  // line rendered "mode:high · mode:high · mode:high · mode:high".
+  const before = new Set(ampEditorHooks());
+  const h1 = await harness();
+  const h2 = await harness();
+  const h3 = await harness();
+  try {
+    const added = [...ampEditorHooks()].filter((hook) => !before.has(hook));
+    assert.equal(added.length, 1, "only the most recent activation's hook should remain registered");
+    await h3.commands.get("mode")!.handler("high", h3.context);
+    assert.equal(added[0]!(), "mode:high");
+  } finally { h1.restore(); h2.restore(); h3.restore(); }
+});
+
 test("cycling skips unavailable models and supports reverse order", async () => {
   const h = await harness({ modes: [...baseModes, { id: "missing", provider: "test", model: "missing", thinkingLevel: "medium" }] });
   try {
