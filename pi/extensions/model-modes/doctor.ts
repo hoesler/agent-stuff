@@ -93,6 +93,6 @@ export function formatDoctorReport(report: DoctorReport): string {
 
 export function formatModeList(config: ModeConfig): string {
   return config.modes
-    .map((mode) => `${mode.id}: ${mode.provider}/${mode.model} · thinking:${mode.thinkingLevel}`)
+    .map((mode) => `${mode.id}: ${mode.provider}/${mode.model} · thinking:${mode.thinkingLevel}${mode.description ? ` · ${mode.description}` : ""}`)
     .join("\n");
 }

@@ -105,3 +105,18 @@ test("mode list formats every mode deterministically", () => {
     "bad: zai/missing · thinking:low",
   ].join("\n"));
 });
+
+test("mode list appends the description when present", () => {
+  const withDescription: ModeConfig = {
+    version: 1,
+    defaultMode: "high",
+    modes: [
+      { id: "high", label: "High", provider: "openai", model: "sol", thinkingLevel: "high", description: "Deep reasoning" },
+      { id: "bad", label: "Bad", provider: "zai", model: "missing", thinkingLevel: "low" },
+    ],
+  };
+  assert.equal(formatModeList(withDescription), [
+    "high: openai/sol · thinking:high · Deep reasoning",
+    "bad: zai/missing · thinking:low",
+  ].join("\n"));
+});
