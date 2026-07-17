@@ -1,5 +1,5 @@
 ---
-name: worker
+name: general-purpose
 description: General-purpose subagent with full capabilities, isolated context
 model: claude-sonnet-4-5
 ---
