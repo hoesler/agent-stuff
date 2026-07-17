@@ -20,10 +20,88 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // @ts-ignore — no type declarations for this internal submodule
-import { getGitHubCopilotBaseUrl, refreshGitHubCopilotToken } from "@earendil-works/pi-ai/oauth";
+import * as copilotOAuthPublicApi from "@earendil-works/pi-ai/oauth";
+
+interface RefreshedCopilotCredentials {
+  access: string;
+  refresh: string;
+  expires?: number;
+  enterpriseUrl?: string;
+}
+
+interface CopilotOAuthAdapter {
+  getBaseUrl(token: string, enterpriseDomain?: string): string | Promise<string>;
+  refreshToken(refreshToken: string, enterpriseDomain?: string): Promise<RefreshedCopilotCredentials>;
+}
+
+/**
+ * Resolve helpers for computing the Copilot API base URL and refreshing OAuth
+ * tokens. pi-ai has re-shuffled this internal module across releases:
+ *  - historically: named exports `getGitHubCopilotBaseUrl`/`refreshGitHubCopilotToken`
+ *    re-exported from the public `@earendil-works/pi-ai/oauth` subpath.
+ *  - as of pi-ai 0.80.10 (pi 0.80.8+): those helpers moved to the private
+ *    `dist/auth/oauth/github-copilot.js` module and are only exposed as an
+ *    `OAuthAuth`-shaped `githubCopilotOAuth` object (`.toAuth()`/`.refresh()`),
+ *    which isn't part of the package's public `exports` map.
+ *
+ * Prefer the stable public API when available and fall back to a deep import
+ * of the private module (which Node allows when using an already-resolved
+ * absolute file path rather than a bare specifier).
+ */
+async function loadCopilotOAuthAdapter(): Promise<CopilotOAuthAdapter | undefined> {
+  const publicApi = copilotOAuthPublicApi as {
+    getGitHubCopilotBaseUrl?: (token: string, enterpriseDomain?: string) => string;
+    refreshGitHubCopilotToken?: (refreshToken: string, enterpriseDomain?: string) => Promise<RefreshedCopilotCredentials>;
+  };
+
+  if (
+    typeof publicApi.getGitHubCopilotBaseUrl === "function" &&
+    typeof publicApi.refreshGitHubCopilotToken === "function"
+  ) {
+    const { getGitHubCopilotBaseUrl, refreshGitHubCopilotToken } = publicApi;
+    return {
+      getBaseUrl: (token, enterpriseDomain) => getGitHubCopilotBaseUrl(token, enterpriseDomain),
+      refreshToken: (refreshToken, enterpriseDomain) => refreshGitHubCopilotToken(refreshToken, enterpriseDomain),
+    };
+  }
+
+  let distDir: string;
+  try {
+    const piAiMain = fileURLToPath(import.meta.resolve("@earendil-works/pi-ai"));
+    distDir = dirname(piAiMain);
+  } catch {
+    return undefined;
+  }
+
+  const candidatePaths = [join(distDir, "auth", "oauth", "github-copilot.js")];
+
+  for (const candidatePath of candidatePaths) {
+    if (!existsSync(candidatePath)) continue;
+    try {
+      const mod = await import(pathToFileURL(candidatePath).href);
+      const oauth = mod.githubCopilotOAuth;
+      if (!oauth || typeof oauth.toAuth !== "function" || typeof oauth.refresh !== "function") continue;
+
+      return {
+        getBaseUrl: async (token, enterpriseDomain) => {
+          const auth = await oauth.toAuth({ access: token, enterpriseUrl: enterpriseDomain });
+          return auth.baseUrl;
+        },
+        refreshToken: async (refreshToken, enterpriseDomain) => {
+          const refreshed = await oauth.refresh({ refresh: refreshToken, enterpriseUrl: enterpriseDomain });
+          return refreshed;
+        },
+      };
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  return undefined;
+}
 
 const COPILOT_HEADERS: Record<string, string> = {
   "User-Agent": "GitHubCopilotChat/0.35.0",
@@ -59,12 +137,16 @@ interface AuthEntry {
  * one has expired. Writes the new credentials back to auth.json so pi picks
  * them up on the next startup (same behaviour as AuthStorage).
  */
-async function getAccessToken(authPath: string, entry: AuthEntry): Promise<string> {
+async function getAccessToken(
+  authPath: string,
+  entry: AuthEntry,
+  adapter: CopilotOAuthAdapter,
+): Promise<string> {
   if (!entry.expires || Date.now() < entry.expires) {
     return entry.access;
   }
   // Token expired — refresh it
-  const refreshed = await refreshGitHubCopilotToken(entry.refresh, entry.enterpriseUrl);
+  const refreshed = await adapter.refreshToken(entry.refresh, entry.enterpriseUrl);
   // Write back so pi's AuthStorage sees the fresh token
   const auth = JSON.parse(readFileSync(authPath, "utf-8"));
   auth["github-copilot"] = { ...auth["github-copilot"], ...refreshed };
@@ -117,14 +199,17 @@ export default async function copilotModelLimits(pi: ExtensionAPI) {
   const copilotAuth = auth["github-copilot"];
   if (!copilotAuth?.access || !copilotAuth?.refresh) return;
 
+  const adapter = await loadCopilotOAuthAdapter();
+  if (!adapter) return; // Unable to resolve OAuth helpers — fall back silently
+
   let accessToken: string;
   try {
-    accessToken = await getAccessToken(authPath, copilotAuth);
+    accessToken = await getAccessToken(authPath, copilotAuth, adapter);
   } catch {
     return; // Refresh failed — fall back silently
   }
 
-  const baseUrl = getGitHubCopilotBaseUrl(accessToken, copilotAuth.enterpriseUrl);
+  const baseUrl = await adapter.getBaseUrl(accessToken, copilotAuth.enterpriseUrl);
 
   let apiModels: CopilotModel[];
   try {
