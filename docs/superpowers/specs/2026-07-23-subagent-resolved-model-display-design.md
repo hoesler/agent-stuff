@@ -1,0 +1,67 @@
+# Subagent Resolved-Model Display
+
+## Goal
+
+Make the subagent TUI usage statistics show the model actually resolved and used by the spawned Pi process, rather than displaying only the requested model argument (for example, `ultra`). Also show the source of the model selection compactly.
+
+## Current behavior
+
+`pi/extensions/subagent/index.ts` launches a child Pi process and initializes `SingleResult.model` from `modelOverride ?? agent.model`. The usage formatter appends that value verbatim. Consequently, aliases or mode-like values passed as overrides can appear as though they were the actual model.
+
+The child assistant message contains the resolved provider and model, with an optional `responseModel` for the provider-reported response model. The extension currently uses only `msg.model` as a fallback, and only when the result did not already have a model.
+
+## Design
+
+### Model metadata
+
+Track two concepts independently:
+
+- **Selection source**: how the requested model was selected:
+  - `task` — per-task or per-chain-step override
+  - `global` — top-level subagent override
+  - `agent` — model from agent frontmatter
+  - `default` — no explicit selection; child Pi chooses its default
+- **Resolved model**: populated from the child assistant message as `provider/responseModel` when `responseModel` exists, otherwise `provider/model`.
+
+The requested model remains available as a fallback only when the child exits before producing an assistant message. The fallback is explicitly marked as unresolved rather than being presented as the actual model.
+
+### Precedence and source propagation
+
+The existing precedence remains unchanged:
+
+1. per-task/per-step `model`
+2. top-level `subagent.model`
+3. agent frontmatter `model`
+4. child Pi default
+
+`runSingleAgent` will receive the already-resolved requested model and its source, so single, chain, and parallel execution paths share the same behavior.
+
+### TUI format
+
+Per-agent usage lines will append a compact source label:
+
+```text
+7 turns ↑14 ↓1.4k R92k W16k $0.0736 ctx:18k github-copilot/claude-sonnet-5 [task]
+```
+
+Source labels are `[task]`, `[global]`, `[agent]`, and `[default]`.
+
+For chain and parallel modes, expanded per-step/per-task lines show the resolved model and source. Aggregate totals remain model-neutral because they combine potentially different models.
+
+### Error and partial-result behavior
+
+If no assistant message is received, the display uses the requested model when one was explicitly supplied, or an unavailable/default marker when no explicit model was supplied. It must not claim that an alias is the resolved model after a child assistant message has reported the actual model.
+
+## Testing
+
+Add focused unit tests for the model metadata/display helper or equivalent extension logic covering:
+
+1. per-task override takes precedence and displays `[task]`;
+2. global override displays `[global]`;
+3. agent frontmatter displays `[agent]`;
+4. no explicit model displays `[default]`;
+5. a requested alias such as `ultra` is replaced by the child message's canonical `provider/model`;
+6. `responseModel` takes precedence over `msg.model` when present;
+7. fallback behavior when the child produces no assistant message.
+
+Run the focused tests, the repository test suite, and TypeScript typechecking before completion.
