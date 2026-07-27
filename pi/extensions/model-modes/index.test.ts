@@ -262,6 +262,18 @@ test("fresh starts apply the default while resume, fork, and reload preserve sel
   } finally { h.restore(); }
 });
 
+test("an explicit CLI model selection outranks the default mode on a fresh start", async () => {
+  const h = await harness({ defaultMode: "high" });
+  const previousArgv = process.argv;
+  try {
+    // What the subagent tool spawns, and what `pi --model <x>` looks like.
+    process.argv = ["/usr/bin/node", "/opt/pi/main.js", "--mode", "json", "-p", "--no-session", "--model", "test/low", "Task: hi"];
+    await h.events.get("session_start")!({ reason: "startup" }, h.context);
+    assert.equal(h.current?.id, "low");
+    assert.equal(h.thinking, "low");
+  } finally { process.argv = previousArgv; h.restore(); }
+});
+
 test("invalid configuration publishes error status and blocks switches", async () => {
   const h = await harness({ configText: "{}" });
   try {
