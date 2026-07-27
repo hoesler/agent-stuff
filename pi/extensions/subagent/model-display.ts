@@ -3,6 +3,8 @@
  * subagent, as opposed to the (possibly alias-like) requested model.
  */
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+
 /**
  * How the requested model was selected:
  *  - "agent"       the *calling* agent explicitly set it, either per-task/
@@ -38,10 +40,24 @@ export function resolveModelSelection(
 }
 
 /**
- * Thinking levels Pi accepts as a `<model>:<level>` suffix, mirroring
- * `VALID_THINKING_LEVELS` in Pi's own argument parser.
+ * Thinking levels Pi accepts in the documented `--model <pattern>:<thinking>`
+ * form. Pi does not export its own validator, so the set is keyed by Pi's
+ * `ModelThinkingLevel` union: a level added or renamed upstream becomes a type
+ * error here rather than a silently mis-split model id.
  */
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const THINKING_LEVELS: Record<ModelThinkingLevel, true> = {
+  off: true,
+  minimal: true,
+  low: true,
+  medium: true,
+  high: true,
+  xhigh: true,
+  max: true,
+};
+
+function isThinkingLevel(value: string): value is ModelThinkingLevel {
+  return Object.hasOwn(THINKING_LEVELS, value);
+}
 
 /**
  * Split a requested model into its model part and an optional thinking level.
@@ -53,12 +69,12 @@ const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhi
  */
 export function splitThinkingLevel(
   requestedModel: string | undefined,
-): { model: string | undefined; thinkingLevel: string | undefined } {
+): { model: string | undefined; thinkingLevel: ModelThinkingLevel | undefined } {
   if (!requestedModel) return { model: requestedModel, thinkingLevel: undefined };
   const lastColon = requestedModel.lastIndexOf(":");
   if (lastColon === -1) return { model: requestedModel, thinkingLevel: undefined };
   const suffix = requestedModel.slice(lastColon + 1);
-  if (!THINKING_LEVELS.has(suffix)) return { model: requestedModel, thinkingLevel: undefined };
+  if (!isThinkingLevel(suffix)) return { model: requestedModel, thinkingLevel: undefined };
   return { model: requestedModel.slice(0, lastColon), thinkingLevel: suffix };
 }
 
