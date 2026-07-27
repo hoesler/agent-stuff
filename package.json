@@ -45,6 +45,6 @@
   },
   "scripts": {
     "test": "node --test pi/extensions/model-modes/*.test.ts pi/extensions/subagent/*.test.ts",
-    "typecheck": "tsc -p pi/extensions/model-modes/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json"
   }
 }
