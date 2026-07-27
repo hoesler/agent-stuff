@@ -37,6 +37,31 @@ export function resolveModelSelection(
   return { model: undefined, source: "pi-default" };
 }
 
+/**
+ * Thinking levels Pi accepts as a `<model>:<level>` suffix, mirroring
+ * `VALID_THINKING_LEVELS` in Pi's own argument parser.
+ */
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Split a requested model into its model part and an optional thinking level.
+ *
+ * Mirrors Pi's parsing: only the segment after the *last* colon is considered,
+ * and only when it names a valid thinking level. Model ids legitimately contain
+ * colons (`openai/gpt-4o:extended`, `llama3.1:8b`), so any other suffix stays
+ * part of the model id.
+ */
+export function splitThinkingLevel(
+  requestedModel: string | undefined,
+): { model: string | undefined; thinkingLevel: string | undefined } {
+  if (!requestedModel) return { model: requestedModel, thinkingLevel: undefined };
+  const lastColon = requestedModel.lastIndexOf(":");
+  if (lastColon === -1) return { model: requestedModel, thinkingLevel: undefined };
+  const suffix = requestedModel.slice(lastColon + 1);
+  if (!THINKING_LEVELS.has(suffix)) return { model: requestedModel, thinkingLevel: undefined };
+  return { model: requestedModel.slice(0, lastColon), thinkingLevel: suffix };
+}
+
 export interface AssistantModelInfo {
   provider?: string;
   model?: string;
@@ -63,6 +88,11 @@ export function resolveModelFromMessage(msg: AssistantModelInfo): string | undef
  * fallback if one was explicitly supplied. If neither is available, an
  * "unresolved" marker is shown instead of presenting nothing (or an alias)
  * as though it were the actual model.
+ *
+ * A thinking level requested as a `:<level>` suffix is re-attached to the
+ * resolved model. The child's assistant messages carry only provider and
+ * model, never the thinking level, so it cannot be recovered from the message
+ * and would otherwise disappear the moment the model resolves.
  */
 export function formatModelDisplay(
   requestedModel: string | undefined,
@@ -70,7 +100,11 @@ export function formatModelDisplay(
   resolvedModel: string | undefined,
 ): string {
   const label = `[${source}]`;
-  if (resolvedModel) return `${resolvedModel} ${label}`;
+  if (resolvedModel) {
+    const { thinkingLevel } = splitThinkingLevel(requestedModel);
+    const effort = thinkingLevel ? `:${thinkingLevel}` : "";
+    return `${resolvedModel}${effort} ${label}`;
+  }
   if (requestedModel) return `${requestedModel} ${label}`;
   return `(unresolved) ${label}`;
 }

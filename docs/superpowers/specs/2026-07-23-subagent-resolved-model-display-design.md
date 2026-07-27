@@ -57,6 +57,21 @@ Source labels are `[agent]`, `[frontmatter]`, and `[pi-default]`.
 
 For chain and parallel modes, expanded per-step/per-task lines show the resolved model and source. Aggregate totals remain model-neutral because they combine potentially different models.
 
+### Requested thinking level
+
+> Revision note: the original design tracked only the model, which silently
+> dropped the `:<level>` effort suffix that the model-modes catalog puts on
+> requested model strings. Assistant messages expose `provider`, `model`, and
+> `responseModel` but no thinking level, so the level is unrecoverable from the
+> child and must be carried over from the requested string. The level is split
+> off using Pi's own rule — last colon only, and only when the suffix names a
+> valid level — and re-attached to the resolved model.
+>
+> This is only truthful because an explicit CLI model selection now outranks
+> the model-modes `defaultMode`; previously the child ignored both the
+> requested model and its level, so echoing the level would have misreported
+> what actually ran.
+
 ### Error and partial-result behavior
 
 If no assistant message is received, the display uses the requested model when one was explicitly supplied, or an unavailable/default marker when no explicit model was supplied. It must not claim that an alias is the resolved model after a child assistant message has reported the actual model.
