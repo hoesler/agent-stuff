@@ -41,6 +41,29 @@ export interface SessionEntryLike {
   type: string;
 }
 
+/**
+ * Flags through which a pi invocation can pin the model or the thinking level.
+ * Kept in sync with pi's own argument parser (`cli/args.ts`), which matches the
+ * exact token and consumes the following argument as the value.
+ */
+const MODEL_SELECTION_FLAGS = new Set(["--model", "--models", "--provider", "--thinking"]);
+
+/**
+ * Whether the invocation pinned a model or thinking level on the command line.
+ *
+ * Such a selection is more specific than the configured `defaultMode`, so
+ * applying the default on session start would silently discard it — which is
+ * exactly what happens to `pi --model <x>` and to every subagent spawned with
+ * an explicit model.
+ *
+ * Matching mirrors pi's parser: only a standalone flag token followed by a
+ * value counts, so a prompt that merely mentions `--model`, a `--model=x` form
+ * pi itself ignores, or a trailing flag with no value are all not selections.
+ */
+export function hasExplicitModelSelection(argv: readonly string[]): boolean {
+  return argv.some((arg, index) => MODEL_SELECTION_FLAGS.has(arg) && index + 1 < argv.length);
+}
+
 export function isFreshSession(event: SessionStartLike, entries: readonly SessionEntryLike[]): boolean {
   if (event.reason === "new") return true;
   if (event.reason !== "startup") return false;

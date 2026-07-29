@@ -10,7 +10,7 @@ import { applyMode, type ApplyRuntime } from "./apply-mode.ts";
 import { formatModeCatalog } from "./catalog.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
-import { type ActualSelection, cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
+import { type ActualSelection, cycleOrder, hasExplicitModelSelection, inferActiveMode, isFreshSession } from "./mode-state.ts";
 import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
@@ -295,6 +295,12 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   pi.on("session_start", async (event, ctx) => {
     const snapshot = await loader.refresh();
     updateStatus(ctx, snapshot);
+    // A model pinned on the command line is a more specific intent than the
+    // configured default, and pi has already resolved it by the time this
+    // fires. Applying defaultMode anyway would silently discard it — which is
+    // what made `pi --model <x>` and every subagent spawned with an explicit
+    // model run defaultMode instead.
+    if (hasExplicitModelSelection(process.argv)) return;
     if (snapshot.ok && isFreshSession(event, ctx.sessionManager.getEntries())) {
       const mode = snapshot.config.modes.find((item) => item.id === snapshot.config.defaultMode)!;
       await serialize(() => activate(ctx, mode));

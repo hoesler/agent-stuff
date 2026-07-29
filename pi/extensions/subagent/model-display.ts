@@ -3,6 +3,8 @@
  * subagent, as opposed to the (possibly alias-like) requested model.
  */
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+
 /**
  * How the requested model was selected:
  *  - "agent"       the *calling* agent explicitly set it, either per-task/
@@ -37,6 +39,45 @@ export function resolveModelSelection(
   return { model: undefined, source: "pi-default" };
 }
 
+/**
+ * Thinking levels Pi accepts in the documented `--model <pattern>:<thinking>`
+ * form. Pi does not export its own validator, so the set is keyed by Pi's
+ * `ModelThinkingLevel` union: a level added or renamed upstream becomes a type
+ * error here rather than a silently mis-split model id.
+ */
+const THINKING_LEVELS: Record<ModelThinkingLevel, true> = {
+  off: true,
+  minimal: true,
+  low: true,
+  medium: true,
+  high: true,
+  xhigh: true,
+  max: true,
+};
+
+function isThinkingLevel(value: string): value is ModelThinkingLevel {
+  return Object.hasOwn(THINKING_LEVELS, value);
+}
+
+/**
+ * Split a requested model into its model part and an optional thinking level.
+ *
+ * Mirrors Pi's parsing: only the segment after the *last* colon is considered,
+ * and only when it names a valid thinking level. Model ids legitimately contain
+ * colons (`openai/gpt-4o:extended`, `llama3.1:8b`), so any other suffix stays
+ * part of the model id.
+ */
+export function splitThinkingLevel(
+  requestedModel: string | undefined,
+): { model: string | undefined; thinkingLevel: ModelThinkingLevel | undefined } {
+  if (!requestedModel) return { model: requestedModel, thinkingLevel: undefined };
+  const lastColon = requestedModel.lastIndexOf(":");
+  if (lastColon === -1) return { model: requestedModel, thinkingLevel: undefined };
+  const suffix = requestedModel.slice(lastColon + 1);
+  if (!isThinkingLevel(suffix)) return { model: requestedModel, thinkingLevel: undefined };
+  return { model: requestedModel.slice(0, lastColon), thinkingLevel: suffix };
+}
+
 export interface AssistantModelInfo {
   provider?: string;
   model?: string;
@@ -63,6 +104,11 @@ export function resolveModelFromMessage(msg: AssistantModelInfo): string | undef
  * fallback if one was explicitly supplied. If neither is available, an
  * "unresolved" marker is shown instead of presenting nothing (or an alias)
  * as though it were the actual model.
+ *
+ * A thinking level requested as a `:<level>` suffix is re-attached to the
+ * resolved model. The child's assistant messages carry only provider and
+ * model, never the thinking level, so it cannot be recovered from the message
+ * and would otherwise disappear the moment the model resolves.
  */
 export function formatModelDisplay(
   requestedModel: string | undefined,
@@ -70,7 +116,11 @@ export function formatModelDisplay(
   resolvedModel: string | undefined,
 ): string {
   const label = `[${source}]`;
-  if (resolvedModel) return `${resolvedModel} ${label}`;
+  if (resolvedModel) {
+    const { thinkingLevel } = splitThinkingLevel(requestedModel);
+    const effort = thinkingLevel ? `:${thinkingLevel}` : "";
+    return `${resolvedModel}${effort} ${label}`;
+  }
   if (requestedModel) return `${requestedModel} ${label}`;
   return `(unresolved) ${label}`;
 }

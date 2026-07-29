@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cycleOrder, inferActiveMode, isFreshSession } from "./mode-state.ts";
+import { cycleOrder, hasExplicitModelSelection, inferActiveMode, isFreshSession } from "./mode-state.ts";
 import type { ModeConfig } from "./types.ts";
 
 const config: ModeConfig = {
@@ -45,4 +45,26 @@ test("only startup without conversation and new sessions are fresh", () => {
   for (const reason of ["reload", "resume", "fork"] as const) {
     assert.equal(isFreshSession({ reason }, []), false);
   }
+});
+
+const argv = (...args: string[]): string[] => ["/usr/bin/node", "/opt/pi/main.js", ...args];
+
+test("every flag that can select a model or effort counts as explicit", () => {
+  for (const flag of ["--model", "--models", "--provider", "--thinking"]) {
+    assert.equal(hasExplicitModelSelection(argv(flag, "value")), true, flag);
+  }
+});
+
+test("an invocation without a selection flag is not explicit", () => {
+  assert.equal(hasExplicitModelSelection(argv("--mode", "json", "-p", "--no-session", "Task: hi")), false);
+  assert.equal(hasExplicitModelSelection(argv()), false);
+});
+
+test("only a standalone flag token counts, and only when pi would consume its value", () => {
+  // A prompt that merely mentions a flag must not look like a selection.
+  assert.equal(hasExplicitModelSelection(argv("Task: what does --model do?")), false);
+  // pi's parser matches the exact token and requires a following value, so
+  // neither "--model=x" nor a trailing "--model" selects anything.
+  assert.equal(hasExplicitModelSelection(argv("--model=openai/gpt-5.5")), false);
+  assert.equal(hasExplicitModelSelection(argv("--model")), false);
 });
