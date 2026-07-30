@@ -120,6 +120,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_info_changed", async (event) => {
+    if (!config()) return;
     controller?.observeNameChange(event.name);
   });
 
