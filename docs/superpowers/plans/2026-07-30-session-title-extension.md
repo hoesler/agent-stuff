@@ -1936,9 +1936,8 @@ Expected: PASS, all tests.
  * overwritten; `/title` re-titles on demand from the current conversation.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionTitleConfigLoader, resolveConfigPaths } from "./config.ts";
 import { createController, type TitleController } from "./controller.ts";
@@ -1947,10 +1946,6 @@ import { generateTitle } from "./title.ts";
 import { initialDialogue, recentWindow } from "./transcript.ts";
 import { resolveTitlingModel, shouldTitleOnSettle } from "./trigger.ts";
 import type { ConfigSnapshot, SessionTitleConfig, TitleMarker } from "./types.ts";
-
-function agentDir(): string {
-  return process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-}
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
   let loader: SessionTitleConfigLoader | undefined;
@@ -1973,7 +1968,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
         resolveConfigPaths({
           envPath: process.env.PI_SESSION_TITLE_CONFIG,
           startupCwd: ctx.cwd,
-          agentDir: agentDir(),
+          agentDir: getAgentDir(),
           projectTrusted: ctx.isProjectTrusted(),
         }),
       );
@@ -2264,7 +2259,7 @@ No titling model configured means the extension does nothing — automatic titli
 is opt-in and never spends tokens on your working model. Sources, lowest
 precedence first:
 
-1. `~/.pi/agent/session-title.json` (or `$PI_AGENT_DIR/session-title.json`)
+1. `~/.pi/agent/session-title.json` (or `$PI_CODING_AGENT_DIR/session-title.json`)
 2. `.pi/session-title.json` in a trusted project — merged over the global file
    per field
 3. `$PI_SESSION_TITLE_CONFIG` — replaces both

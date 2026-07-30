@@ -49,7 +49,8 @@ swallowing them).
 
 Sources, lowest precedence first:
 
-1. `~/.pi/agent/session-title.json` — global (`PI_AGENT_DIR` respected)
+1. `~/.pi/agent/session-title.json` — global, located via pi's own `getAgentDir()`
+   (so `PI_CODING_AGENT_DIR` is respected, including a leading `~`)
 2. `.pi/session-title.json` — project, shallow-merged over global per top-level
    field, so a repo can override `model` without restating `maxLength`
 3. `PI_SESSION_TITLE_CONFIG` — absolute, or resolved against the startup cwd;
@@ -299,7 +300,7 @@ mirroring `/mode`:
 
 | invocation | behavior |
 | --- | --- |
-| `/title` | generate from the conversation as it stands: first exchange plus a recent-message window, token-capped |
+| `/title` | generate from the conversation as it stands: a recent-message window, token-capped |
 | `/title status` | configured model, whether it resolves, enabled state, current name and whether it was user-set or generated, whether auto-titling has run |
 | `/title on` / `/title off` | session-scoped toggle, not persisted |
 | `/title doctor` | config paths in precedence order, parse errors, model resolution and authentication result, example config |
