@@ -1,8 +1,14 @@
 import { stripNoise, type DialoguePart } from "./transcript.ts";
 import type { SessionTitleConfig } from "./types.ts";
 
-/** A title needs a few dozen tokens; anything more is a runaway reasoning model. */
-export const MAX_TITLE_TOKENS = 64;
+/**
+ * A title needs only a few dozen tokens, but on reasoning models `maxTokens`
+ * maps to `max_output_tokens` / `max_completion_tokens`, which counts reasoning
+ * tokens against the same budget. A tight cap can be consumed entirely by
+ * reasoning before any text is produced, yielding an empty completion. The
+ * headroom here is a rounding error for a once-per-session call.
+ */
+export const MAX_TITLE_TOKENS = 512;
 
 /** Hard bound on the titling call. */
 export const TITLE_TIMEOUT_MS = 10_000;
