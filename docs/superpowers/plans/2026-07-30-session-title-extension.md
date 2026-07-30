@@ -1526,12 +1526,12 @@ test("a manual request runs even when titling is disabled", async () => {
   assert.deepEqual(h.names, ["Titling extension"]);
 });
 
-test("an unchanged name is not written again", async () => {
+test("an unchanged name produces no rename and no metadata write", async () => {
   const h = harness(async () => "Same name");
   await h.controller.run("manual");
   await h.controller.run("manual");
   assert.deepEqual(h.names, ["Same name"], "second identical result must not write");
-  assert.equal(h.markers.length, 2, "each successful run still records a marker");
+  assert.equal(h.markers.length, 1, "an unchanged result must not append a marker either");
 });
 
 test("a generator returning undefined writes nothing", async () => {
@@ -1709,11 +1709,15 @@ export function createController(runtime: ControllerRuntime): TitleController {
     ownName = normalized;
     titled = true;
 
+    // An unchanged result writes nothing at all — no rename, and no marker,
+    // since markers are persisted session entries and a no-op re-run must not
+    // accumulate them.
     if (normalized === normalizeName(runtime.getCurrentName())) {
       runtime.debug(`title already current: ${normalized}`);
-    } else {
-      runtime.setSessionName(normalized);
+      return normalized;
     }
+
+    runtime.setSessionName(normalized);
     runtime.appendMarker({ kind: "generated", name: normalized, timestamp: runtime.now() });
     return normalized;
   };
