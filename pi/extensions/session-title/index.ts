@@ -6,10 +6,8 @@
  * overwritten; `/title` re-titles on demand from the current conversation.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionTitleConfigLoader, resolveConfigPaths } from "./config.ts";
 import { createController, type TitleController } from "./controller.ts";
 import { alreadyTitled, latestMarker, STATE_ENTRY_TYPE } from "./state.ts";
@@ -17,10 +15,6 @@ import { generateTitle } from "./title.ts";
 import { initialDialogue, recentWindow } from "./transcript.ts";
 import { resolveTitlingModel, shouldTitleOnSettle } from "./trigger.ts";
 import type { ConfigSnapshot, SessionTitleConfig, TitleMarker } from "./types.ts";
-
-function agentDir(): string {
-  return process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-}
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
   let loader: SessionTitleConfigLoader | undefined;
@@ -43,7 +37,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
         resolveConfigPaths({
           envPath: process.env.PI_SESSION_TITLE_CONFIG,
           startupCwd: ctx.cwd,
-          agentDir: agentDir(),
+          agentDir: getAgentDir(),
           projectTrusted: ctx.isProjectTrusted(),
         }),
       );

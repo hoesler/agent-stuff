@@ -9,7 +9,7 @@ No titling model configured means the extension does nothing — automatic titli
 is opt-in and never spends tokens on your working model. Sources, lowest
 precedence first:
 
-1. `~/.pi/agent/session-title.json` (or `$PI_AGENT_DIR/session-title.json`)
+1. `~/.pi/agent/session-title.json` (or `$PI_CODING_AGENT_DIR/session-title.json`)
 2. `.pi/session-title.json` in a trusted project — merged over the global file
    per field
 3. `$PI_SESSION_TITLE_CONFIG` — replaces both
