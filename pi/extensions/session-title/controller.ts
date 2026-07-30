@@ -67,9 +67,9 @@ export function createController(runtime: ControllerRuntime): TitleController {
 
     if (normalized === normalizeName(runtime.getCurrentName())) {
       runtime.debug(`title already current: ${normalized}`);
-    } else {
-      runtime.setSessionName(normalized);
+      return normalized;
     }
+    runtime.setSessionName(normalized);
     runtime.appendMarker({ kind: "generated", name: normalized, timestamp: runtime.now() });
     return normalized;
   };

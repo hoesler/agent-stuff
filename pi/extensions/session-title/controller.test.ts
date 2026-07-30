@@ -64,7 +64,7 @@ test("an unchanged name is not written again", async () => {
   await h.controller.run("manual");
   await h.controller.run("manual");
   assert.deepEqual(h.names, ["Same name"], "second identical result must not write");
-  assert.equal(h.markers.length, 2, "each successful run still records a marker");
+  assert.equal(h.markers.length, 1, "an unchanged result appends no session metadata write");
 });
 
 test("a generator returning undefined writes nothing", async () => {
