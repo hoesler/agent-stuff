@@ -48,22 +48,9 @@ test("latestMarker returns undefined when there is no marker", () => {
 });
 
 test("alreadyTitled is false for an unnamed session", () => {
-  assert.equal(alreadyTitled(undefined, undefined), false);
+  assert.equal(alreadyTitled(undefined), false);
 });
 
-test("alreadyTitled is true for a named session with no marker", () => {
-  assert.equal(alreadyTitled(undefined, "Named elsewhere"), true);
-});
-
-test("alreadyTitled is true when a marker matches the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, "Ours"), true);
-  assert.equal(alreadyTitled({ kind: "user", name: "Theirs", timestamp: 1 }, "Theirs"), true);
-});
-
-test("alreadyTitled is false when the name was cleared after a marker", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, undefined), false);
-});
-
-test("alreadyTitled is true when a stale marker disagrees with the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Old", timestamp: 1 }, "New"), true);
+test("alreadyTitled is true for a named session", () => {
+  assert.equal(alreadyTitled("Named elsewhere"), true);
 });

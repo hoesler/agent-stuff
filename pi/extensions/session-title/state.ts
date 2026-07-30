@@ -39,9 +39,6 @@ export function latestMarker(branch: readonly unknown[]): TitleMarker | undefine
  * with the marker also counts as titled: something set it, and overwriting it
  * would be the one behavior this design rules out.
  */
-export function alreadyTitled(
-  _marker: TitleMarker | undefined,
-  existingName: string | undefined,
-): boolean {
+export function alreadyTitled(existingName: string | undefined): boolean {
   return Boolean(existingName);
 }
