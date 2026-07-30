@@ -131,8 +131,10 @@ handed a `ModelRegistry`, not a `Models`. `/compat` preserves the
 it is the supported path. Verified present in the pinned 0.80.7.
 
 `completeSimple` rather than `complete`, because `SimpleStreamOptions` accepts a
-provider-neutral `reasoning` level and clamps it — including turning `"off"` into
-a disabled thinking config — which is what our `thinkingLevel` field needs.
+provider-neutral `reasoning` level, whereas `complete` takes provider-native
+options. Note that pi-ai's `ThinkingLevel` does not include `"off"` — that value
+lives in `ModelThinkingLevel` — so a configured `thinkingLevel: "off"` is
+expressed by omitting `reasoning` entirely, not by passing it through.
 
 All three auth fields are forwarded. `ResolvedRequestAuth` is
 `{ ok: true, apiKey?, headers?, env? }`, and a provider that authenticates
@@ -326,7 +328,12 @@ rename and no session metadata write.
 | `title.ts` | prompt construction, completion call, cleaning, quality gate |
 | `state.ts` | marker read/write and the already-titled decision |
 | `controller.ts` | request lifecycle: sequencing, abort, applying a result |
+| `trigger.ts` | the trigger predicate and `provider/model` lookup |
 | `index.ts` | event wiring, command dispatch, guards |
+
+`index.ts` is the only module that imports pi or pi-ai at runtime. The trigger
+predicate lives in `trigger.ts` rather than `index.ts` so testing a boolean does
+not load a provider stack.
 
 `title.ts` takes the completion function as a parameter rather than importing it
 directly, so its tests need no network and no registry.
