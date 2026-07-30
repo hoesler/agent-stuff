@@ -1308,7 +1308,7 @@ git commit -m "feat(session-title): generate, clean, and gate titles"
 
 **Interfaces:**
 - Consumes: `TitleMarker` from `types.ts`.
-- Produces: `STATE_ENTRY_TYPE`, `parseMarker(data): TitleMarker | undefined`, `latestMarker(branch): TitleMarker | undefined`, `alreadyTitled(marker, existingName): boolean`.
+- Produces: `STATE_ENTRY_TYPE`, `parseMarker(data): TitleMarker | undefined`, `latestMarker(branch): TitleMarker | undefined`, `alreadyTitled(existingName): boolean`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1365,24 +1365,11 @@ test("latestMarker returns undefined when there is no marker", () => {
 });
 
 test("alreadyTitled is false for an unnamed session", () => {
-  assert.equal(alreadyTitled(undefined, undefined), false);
+  assert.equal(alreadyTitled(undefined), false);
 });
 
-test("alreadyTitled is true for a named session with no marker", () => {
-  assert.equal(alreadyTitled(undefined, "Named elsewhere"), true);
-});
-
-test("alreadyTitled is true when a marker matches the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, "Ours"), true);
-  assert.equal(alreadyTitled({ kind: "user", name: "Theirs", timestamp: 1 }, "Theirs"), true);
-});
-
-test("alreadyTitled is false when the name was cleared after a marker", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, undefined), false);
-});
-
-test("alreadyTitled is true when a stale marker disagrees with the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Old", timestamp: 1 }, "New"), true);
+test("alreadyTitled is true for any named session", () => {
+  assert.equal(alreadyTitled("Named elsewhere"), true);
 });
 ```
 
@@ -1435,10 +1422,7 @@ export function latestMarker(branch: readonly unknown[]): TitleMarker | undefine
  * with the marker also counts as titled: something set it, and overwriting it
  * would be the one behavior this design rules out.
  */
-export function alreadyTitled(
-  _marker: TitleMarker | undefined,
-  existingName: string | undefined,
-): boolean {
+export function alreadyTitled(existingName: string | undefined): boolean {
   return Boolean(existingName);
 }
 ```
@@ -1448,7 +1432,7 @@ export function alreadyTitled(
 Run: `node --test pi/extensions/session-title/state.test.ts`
 Expected: PASS, all tests.
 
-Note: `alreadyTitled` ignores `marker` — any existing name stands down. The parameter stays because `/title status` reports the marker kind, and the tests pin the semantics so a future change to "re-title our own generated names" has to change a test deliberately rather than by accident.
+Note: `alreadyTitled` takes only the existing name — any existing name stands down, whatever the marker says. An earlier draft of this plan passed the marker in as well, "for `/title status`"; that was wrong, since Task 6's status command reads `latestMarker()` directly and never routes it through here. The marker belongs in this signature only when a behavior actually depends on it.
 
 - [ ] **Step 5: Verify the whole suite and types**
 
@@ -2053,10 +2037,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
     });
 
     const existingName = pi.getSessionName();
-    controller.restore(
-      alreadyTitled(latestMarker(ctx.sessionManager.getBranch()), existingName),
-      existingName,
-    );
+    controller.restore(alreadyTitled(existingName), existingName);
   });
 
   pi.on("session_info_changed", async (event) => {
