@@ -132,3 +132,23 @@ test("initialDialogue uses the recent window once the session has moved on", () 
   ];
   assert.deepEqual(initialDialogue(branch).at(-1), { role: "assistant", text: "four" });
 });
+
+test("initialDialogue still uses the first exchange when a single turn spans several tool-call rounds", () => {
+  // One user message, but the agent loop appended several text-bearing
+  // assistant messages across tool-call rounds. This must still count as the
+  // opening exchange, not "the session has moved on" — a count over all
+  // messages (rather than user messages) would wrongly route this to
+  // recentWindow and could even drop the user's original prompt entirely.
+  const branch = [
+    message("user", "set up the titling extension"),
+    message("assistant", [{ type: "toolCall", name: "bash" }]),
+    message("assistant", [{ type: "text", text: "checking the repo" }]),
+    message("assistant", [{ type: "toolCall", name: "bash" }]),
+    message("assistant", [{ type: "text", text: "running tests" }]),
+    message("assistant", [{ type: "text", text: "done, all green" }]),
+  ];
+  assert.deepEqual(initialDialogue(branch), [
+    { role: "user", text: "set up the titling extension" },
+    { role: "assistant", text: "checking the repo" },
+  ]);
+});

@@ -101,22 +101,23 @@ export function recentWindow(
   return parts.reverse();
 }
 
-function messageCount(branch: readonly unknown[]): number {
+function userMessageCount(branch: readonly unknown[]): number {
   let count = 0;
   for (const entry of branch as any[]) {
-    const role = entry?.message?.role;
-    if (entry?.type === "message" && (role === "user" || role === "assistant")) count += 1;
+    if (entry?.type === "message" && entry?.message?.role === "user") count += 1;
   }
   return count;
 }
 
 /**
  * Input for automatic titling. A fresh session is titled from its opening
- * exchange; a session that accumulated more than one exchange without ever
+ * exchange; a session that accumulated more than one user turn without ever
  * being named is titled from its recent window, because its first exchange is
- * no longer what the session is about.
+ * no longer what the session is about. Counting user messages rather than all
+ * messages matters because a single turn can span several assistant messages
+ * across tool-call rounds.
  */
 export function initialDialogue(branch: readonly unknown[]): DialoguePart[] {
-  if (messageCount(branch) > 2) return recentWindow(branch);
+  if (userMessageCount(branch) > 1) return recentWindow(branch);
   return firstExchange(branch);
 }
