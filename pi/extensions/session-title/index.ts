@@ -110,7 +110,12 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
       isEnabled,
       getCurrentName: () => pi.getSessionName(),
       setSessionName: (name) => pi.setSessionName(name),
-      appendMarker: (marker: TitleMarker) => pi.appendEntry(STATE_ENTRY_TYPE, marker),
+      // The controller must always latch a user rename so an unconfigured session
+      // that is later configured cannot overwrite it; the guard here ensures an
+      // unconfigured extension leaves no trace in the session file.
+      appendMarker: (marker: TitleMarker) => {
+        if (config()) pi.appendEntry(STATE_ENTRY_TYPE, marker);
+      },
       generateTitle: (request) => runGeneration(ctx, request.mode, request.currentName, request.signal),
       debug: debugLog,
     });
@@ -120,7 +125,6 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_info_changed", async (event) => {
-    if (!config()) return;
     controller?.observeNameChange(event.name);
   });
 
