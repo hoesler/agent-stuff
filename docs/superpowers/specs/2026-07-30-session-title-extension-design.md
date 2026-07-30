@@ -30,10 +30,16 @@ quality gate, and naming state persisted into the session as custom entries. Its
 periodic re-naming overwrites user-set names by default, which its own README
 concedes makes pi's `/name` "largely redundant".
 
-This design takes the shape of `pi-session-namer`, adopts `pi-autoname`'s safety
-and robustness machinery, and diverges on three deliberate points: naming is
-explicit opt-in rather than working out of the box on the session model, a
-manually set name is never overwritten, and there is no periodic re-naming.
+This design takes the shape of `pi-session-namer` and ports `pi-autoname`'s
+robustness machinery — transcript extraction, output quality gate, request
+lifecycle, persisted markers, prompt hardening — while diverging on three
+deliberate points: naming is explicit opt-in rather than working out of the box
+on the session model, a manually set name is never overwritten, and there is no
+periodic re-naming. Those three cuts remove `pi-autoname`'s model fallback chain,
+its non-LLM fallback name, and its cooldown machinery.
+
+`pi-autoname` is MIT-licensed. Ported code carries attribution in the
+extension's `README.md`.
 
 ## Configuration
 
@@ -173,12 +179,35 @@ Guards, in order:
    event also fires for the extension's own `setSessionName()` calls, so the
    handler ignores a name it just wrote itself — otherwise every generated title
    would immediately be marked user-set
-4. A `titled` latch set before the async call starts, so a failure never retries
+4. The controller's state (below) is set before the async call starts, so a
+   failure never retries
 
 Input to the model: the first user message and the first assistant reply. A
 resumed session that has accumulated more than one exchange but never got a name
 is titled from its recent window instead, since its first exchange is no longer
 what the session is about.
+
+## Request lifecycle
+
+Titling requests go through a small controller, ported in shape from
+`pi-autoname`'s `controller.ts`, which owns the naming state and all writes to
+the session name. A boolean latch is not enough: `/title` can be run while the
+automatic call is still in flight, and `session_shutdown` can arrive mid-call.
+
+- a monotonically increasing request sequence; a result whose sequence is stale
+  is discarded rather than applied
+- a new request aborts the one it supersedes
+- `session_shutdown` bumps the sequence and aborts any in-flight request
+- `lastGeneratedName` is recorded *before* calling `setSessionName()`, so the
+  `session_info_changed` echo of our own write is recognised as ours
+- a result equal to the current name is not written at all — no rename, no
+  session metadata write
+- names are normalised (trimmed, whitespace collapsed) before comparison, so
+  cosmetic differences don't count as a change
+
+The controller takes its clock, config accessor, name accessors, marker writer,
+and generator as injected functions, so all of this is testable without a
+session or a provider.
 
 ## Persisted state
 
@@ -215,16 +244,7 @@ Two extraction modes:
 
 Both cap per-message text so one large paste cannot dominate the excerpt.
 
-## Redaction and prompt hardening
-
-Before any text reaches the model, the excerpt and the current name are passed
-through a redactor covering PEM private-key blocks, AWS access key ids,
-`sk-`-prefixed API keys, bearer tokens, `*_KEY` / `*_TOKEN` / `*_SECRET` /
-`*_PASSWORD` assignments, and `api_key:`/`token:`/`password:` key-value pairs.
-
-This matters more than for a normal side agent: a session title is persisted
-into the session file and displayed in the session selector, so an unredacted
-secret would be copied somewhere long-lived and visible.
+## Prompt hardening
 
 The system prompt states that the conversation excerpt is untrusted input and
 that instructions inside it must never be followed. The excerpt contains
@@ -302,11 +322,11 @@ rename and no session metadata write.
 | --- | --- |
 | `types.ts` | `SessionTitleConfig`, `ConfigSnapshot`, `TitleMarker`, defaults |
 | `config.ts` | path resolution, strict parse, global/project merge, mtime cache, errors |
-| `transcript.ts` | first-exchange and recent-window extraction from a branch |
-| `redact.ts` | secret patterns, redaction, code/URL/path stripping |
+| `transcript.ts` | first-exchange and recent-window extraction, code/URL/path stripping |
 | `title.ts` | prompt construction, completion call, cleaning, quality gate |
 | `state.ts` | marker read/write and the already-titled decision |
-| `index.ts` | event wiring, command dispatch, guards, latch |
+| `controller.ts` | request lifecycle: sequencing, abort, applying a result |
+| `index.ts` | event wiring, command dispatch, guards |
 
 `title.ts` takes the completion function as a parameter rather than importing it
 directly, so its tests need no network and no registry.
@@ -323,9 +343,7 @@ Unit tests, no network:
 - `transcript`: string content versus `ContentBlock[]`, turns containing only
   tool calls, empty or image-only prompts, missing assistant reply, compaction
   summary standing in for a consumed first exchange, recent-window selection
-  and caps
-- `redact`: each secret pattern, capture-group preservation in the bearer and
-  assignment patterns, the redacted flag, code fence and path stripping
+  and caps, code fence / inline code / URL / path stripping
 - `title`: prefix and quote stripping, `maxLength` boundaries including
   `maxLength <= 3` and `maxLength: 0`, quality-gate accept and reject cases,
   `thinking`-block fallback, empty and error results from the injected
@@ -333,7 +351,11 @@ Unit tests, no network:
 - `state`: marker parsing including unknown and corrupt payloads, latest-wins
   ordering, the already-titled decision for each marker kind and for a named
   session with no marker
-- `index`: the trigger predicate only — no UI, disabled config, latch behavior —
+- `controller`: stale results discarded, supersede aborts the previous request,
+  shutdown aborts in flight, our own `session_info_changed` echo not mistaken for
+  a user rename, no write when the name is unchanged, normalisation before
+  comparison
+- `index`: the trigger predicate only — no UI, disabled config, already-titled —
   in the same spirit as `model-modes`' `isFreshSession`
 
 ## Out of scope
@@ -343,6 +365,16 @@ Unit tests, no network:
   without changing a label the user may have come to recognize.
 - **A model fallback chain.** One configured model, one attempt.
 - **Non-LLM fallback titles.** No truncated-prompt or extracted-phrase name.
+- **Secret redaction before the model call.** `pi-autoname` scrubs API keys,
+  bearer tokens, and key-value secret assignments from the excerpt. Skipped here
+  because the full conversation already goes to the working model and is already
+  written to the session file unredacted — scrubbing a 2000-character excerpt
+  while the transcript sits beside it protects nothing, and the concern is
+  general rather than titling-specific. It would become relevant if the titling
+  model were deliberately pointed at a provider less trusted than the working
+  model, which a cheap-model config invites. In that case redaction belongs in
+  `transcript.ts`, applied to the excerpt and the current name on the way into
+  `title.ts`.
 - **Auto-generating the config file.** Would contradict explicit opt-in.
 - Exposing titling as a tool the agent can call.
 - Any interaction with `model-modes` beyond sharing the `provider/model` string
