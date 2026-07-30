@@ -141,8 +141,11 @@ All three auth fields are forwarded. `ResolvedRequestAuth` is
 `{ ok: true, apiKey?, headers?, env? }`, and a provider that authenticates
 through `env` fails silently if `env` is dropped.
 
-`maxTokens` is capped (64) — a label needs a few dozen tokens, and an uncapped
-call on a reasoning model can run long for no benefit.
+`maxTokens` is capped (512) — an uncapped call on a reasoning model can run long
+for no benefit. The cap is far above what a label needs because pi-ai maps
+`maxTokens` to `max_output_tokens`, which counts reasoning tokens too: a tight
+cap starves the text output entirely and returns `stopReason: "length"` with
+empty content.
 
 Errors are surfaced, not swallowed: pi-ai reports provider rejections as
 `stopReason: "error"` with an `errorMessage` and empty content, which would
