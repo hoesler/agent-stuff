@@ -1678,7 +1678,10 @@ export interface TitleController {
   restore(titled: boolean, existingName: string | undefined): void;
   /** React to `session_info_changed`. */
   observeNameChange(name: string | undefined): void;
-  /** Whether automatic titling should stand down. */
+  /**
+   * Whether automatic titling should stand down: the session has a name, an
+   * external rename was observed, or the one automatic attempt has been spent.
+   */
   isTitled(): boolean;
   run(mode: TitleMode): Promise<string | undefined>;
   shutdown(): void;
@@ -1749,6 +1752,12 @@ export function createController(runtime: ControllerRuntime): TitleController {
       const controller = new AbortController();
       active = controller;
       const requestSequence = ++sequence;
+
+      // One automatic attempt per session, successful or not: latch before
+      // awaiting, or a permanently failing provider is re-called every turn
+      // with warnOnce silencing it. A manual run never latches — a failed
+      // /title must not block automatic titling.
+      if (mode !== "manual") titled = true;
 
       try {
         const name = await runtime.generateTitle({
@@ -2090,7 +2099,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
             `Automatic titling: ${isEnabled() ? "enabled" : "disabled"}`,
             `Current name: ${pi.getSessionName() ?? "(none)"}`,
             `Name source: ${marker ? marker.kind : pi.getSessionName() ? "unknown" : "(none)"}`,
-            `Has titled this session: ${controller?.isTitled() ?? false}`,
+            `Automatic titling has run: ${controller?.isTitled() ?? false}`,
           ].join("\n"),
           "info",
         );
