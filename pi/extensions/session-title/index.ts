@@ -166,7 +166,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
             `Automatic titling: ${isEnabled() ? "enabled" : "disabled"}`,
             `Current name: ${pi.getSessionName() ?? "(none)"}`,
             `Name source: ${marker ? marker.kind : pi.getSessionName() ? "unknown" : "(none)"}`,
-            `Automatic titling has run: ${controller?.isTitled() ?? false}`,
+            `Automatic titling: ${controller?.isTitled() ? "stood down" : "armed"}`,
           ].join("\n"),
           "info",
         );
