@@ -1308,7 +1308,7 @@ git commit -m "feat(session-title): generate, clean, and gate titles"
 
 **Interfaces:**
 - Consumes: `TitleMarker` from `types.ts`.
-- Produces: `STATE_ENTRY_TYPE`, `parseMarker(data): TitleMarker | undefined`, `latestMarker(branch): TitleMarker | undefined`, `alreadyTitled(marker, existingName): boolean`.
+- Produces: `STATE_ENTRY_TYPE`, `parseMarker(data): TitleMarker | undefined`, `latestMarker(branch): TitleMarker | undefined`, `alreadyTitled(existingName): boolean`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1365,24 +1365,11 @@ test("latestMarker returns undefined when there is no marker", () => {
 });
 
 test("alreadyTitled is false for an unnamed session", () => {
-  assert.equal(alreadyTitled(undefined, undefined), false);
+  assert.equal(alreadyTitled(undefined), false);
 });
 
-test("alreadyTitled is true for a named session with no marker", () => {
-  assert.equal(alreadyTitled(undefined, "Named elsewhere"), true);
-});
-
-test("alreadyTitled is true when a marker matches the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, "Ours"), true);
-  assert.equal(alreadyTitled({ kind: "user", name: "Theirs", timestamp: 1 }, "Theirs"), true);
-});
-
-test("alreadyTitled is false when the name was cleared after a marker", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Ours", timestamp: 1 }, undefined), false);
-});
-
-test("alreadyTitled is true when a stale marker disagrees with the current name", () => {
-  assert.equal(alreadyTitled({ kind: "generated", name: "Old", timestamp: 1 }, "New"), true);
+test("alreadyTitled is true for any named session", () => {
+  assert.equal(alreadyTitled("Named elsewhere"), true);
 });
 ```
 
@@ -1435,10 +1422,7 @@ export function latestMarker(branch: readonly unknown[]): TitleMarker | undefine
  * with the marker also counts as titled: something set it, and overwriting it
  * would be the one behavior this design rules out.
  */
-export function alreadyTitled(
-  _marker: TitleMarker | undefined,
-  existingName: string | undefined,
-): boolean {
+export function alreadyTitled(existingName: string | undefined): boolean {
   return Boolean(existingName);
 }
 ```
@@ -1448,7 +1432,7 @@ export function alreadyTitled(
 Run: `node --test pi/extensions/session-title/state.test.ts`
 Expected: PASS, all tests.
 
-Note: `alreadyTitled` ignores `marker` — any existing name stands down. The parameter stays because `/title status` reports the marker kind, and the tests pin the semantics so a future change to "re-title our own generated names" has to change a test deliberately rather than by accident.
+Note: `alreadyTitled` takes only the existing name — any existing name stands down, whatever the marker says. An earlier draft of this plan passed the marker in as well, "for `/title status`"; that was wrong, since Task 6's status command reads `latestMarker()` directly and never routes it through here. The marker belongs in this signature only when a behavior actually depends on it.
 
 - [ ] **Step 5: Verify the whole suite and types**
 
@@ -1542,12 +1526,12 @@ test("a manual request runs even when titling is disabled", async () => {
   assert.deepEqual(h.names, ["Titling extension"]);
 });
 
-test("an unchanged name is not written again", async () => {
+test("an unchanged name produces no rename and no metadata write", async () => {
   const h = harness(async () => "Same name");
   await h.controller.run("manual");
   await h.controller.run("manual");
   assert.deepEqual(h.names, ["Same name"], "second identical result must not write");
-  assert.equal(h.markers.length, 2, "each successful run still records a marker");
+  assert.equal(h.markers.length, 1, "an unchanged result must not append a marker either");
 });
 
 test("a generator returning undefined writes nothing", async () => {
@@ -1694,7 +1678,10 @@ export interface TitleController {
   restore(titled: boolean, existingName: string | undefined): void;
   /** React to `session_info_changed`. */
   observeNameChange(name: string | undefined): void;
-  /** Whether automatic titling should stand down. */
+  /**
+   * Whether automatic titling should stand down: the session has a name, an
+   * external rename was observed, or the one automatic attempt has been spent.
+   */
   isTitled(): boolean;
   run(mode: TitleMode): Promise<string | undefined>;
   shutdown(): void;
@@ -1725,11 +1712,15 @@ export function createController(runtime: ControllerRuntime): TitleController {
     ownName = normalized;
     titled = true;
 
+    // An unchanged result writes nothing at all — no rename, and no marker,
+    // since markers are persisted session entries and a no-op re-run must not
+    // accumulate them.
     if (normalized === normalizeName(runtime.getCurrentName())) {
       runtime.debug(`title already current: ${normalized}`);
-    } else {
-      runtime.setSessionName(normalized);
+      return normalized;
     }
+
+    runtime.setSessionName(normalized);
     runtime.appendMarker({ kind: "generated", name: normalized, timestamp: runtime.now() });
     return normalized;
   };
@@ -1755,12 +1746,20 @@ export function createController(runtime: ControllerRuntime): TitleController {
     },
 
     async run(mode) {
-      if (mode !== "manual" && !runtime.isEnabled()) return undefined;
+      // `titled` in the guard makes the one-attempt rule the controller's own,
+      // rather than relying on every caller to check isTitled() first.
+      if (mode !== "manual" && (!runtime.isEnabled() || titled)) return undefined;
 
       active?.abort(new Error("superseded by a newer titling request"));
       const controller = new AbortController();
       active = controller;
       const requestSequence = ++sequence;
+
+      // One automatic attempt per session, successful or not: latch before
+      // awaiting, or a permanently failing provider is re-called every turn
+      // with warnOnce silencing it. A manual run never latches — a failed
+      // /title must not block automatic titling.
+      if (mode !== "manual") titled = true;
 
       try {
         const name = await runtime.generateTitle({
@@ -1937,9 +1936,8 @@ Expected: PASS, all tests.
  * overwritten; `/title` re-titles on demand from the current conversation.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionTitleConfigLoader, resolveConfigPaths } from "./config.ts";
 import { createController, type TitleController } from "./controller.ts";
@@ -1948,10 +1946,6 @@ import { generateTitle } from "./title.ts";
 import { initialDialogue, recentWindow } from "./transcript.ts";
 import { resolveTitlingModel, shouldTitleOnSettle } from "./trigger.ts";
 import type { ConfigSnapshot, SessionTitleConfig, TitleMarker } from "./types.ts";
-
-function agentDir(): string {
-  return process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-}
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
   let loader: SessionTitleConfigLoader | undefined;
@@ -1974,7 +1968,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
         resolveConfigPaths({
           envPath: process.env.PI_SESSION_TITLE_CONFIG,
           startupCwd: ctx.cwd,
-          agentDir: agentDir(),
+          agentDir: getAgentDir(),
           projectTrusted: ctx.isProjectTrusted(),
         }),
       );
@@ -2053,10 +2047,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
     });
 
     const existingName = pi.getSessionName();
-    controller.restore(
-      alreadyTitled(latestMarker(ctx.sessionManager.getBranch()), existingName),
-      existingName,
-    );
+    controller.restore(alreadyTitled(existingName), existingName);
   });
 
   pi.on("session_info_changed", async (event) => {
@@ -2105,7 +2096,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
             `Automatic titling: ${isEnabled() ? "enabled" : "disabled"}`,
             `Current name: ${pi.getSessionName() ?? "(none)"}`,
             `Name source: ${marker ? marker.kind : pi.getSessionName() ? "unknown" : "(none)"}`,
-            `Has titled this session: ${controller?.isTitled() ?? false}`,
+            `Automatic titling has run: ${controller?.isTitled() ?? false}`,
           ].join("\n"),
           "info",
         );
@@ -2268,7 +2259,7 @@ No titling model configured means the extension does nothing — automatic titli
 is opt-in and never spends tokens on your working model. Sources, lowest
 precedence first:
 
-1. `~/.pi/agent/session-title.json` (or `$PI_AGENT_DIR/session-title.json`)
+1. `~/.pi/agent/session-title.json` (or `$PI_CODING_AGENT_DIR/session-title.json`)
 2. `.pi/session-title.json` in a trusted project — merged over the global file
    per field
 3. `$PI_SESSION_TITLE_CONFIG` — replaces both
