@@ -1746,7 +1746,9 @@ export function createController(runtime: ControllerRuntime): TitleController {
     },
 
     async run(mode) {
-      if (mode !== "manual" && !runtime.isEnabled()) return undefined;
+      // `titled` in the guard makes the one-attempt rule the controller's own,
+      // rather than relying on every caller to check isTitled() first.
+      if (mode !== "manual" && (!runtime.isEnabled() || titled)) return undefined;
 
       active?.abort(new Error("superseded by a newer titling request"));
       const controller = new AbortController();
