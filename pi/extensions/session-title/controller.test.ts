@@ -143,6 +143,23 @@ test("shutdown aborts an in-flight request and discards its result", async () =>
   assert.deepEqual(h.names, []);
 });
 
+test("an in-flight automatic title is discarded, not applied, when the user renames mid-flight", async () => {
+  let release: (() => void) | undefined;
+  const h = harness(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return "Generated title";
+  });
+
+  const pending = h.controller.run("initial");
+  h.controller.observeNameChange("User name");
+  release?.();
+  assert.equal(await pending, undefined, "the in-flight result must be discarded");
+  assert.deepEqual(h.names, [], "setSessionName must never be called with the generated title");
+  assert.equal(h.current(), undefined, "the recorded name is whatever observeNameChange saw, not the generated title");
+});
+
 test("our own name change is not recorded as a user rename", async () => {
   const h = harness(async () => "Ours");
   await h.controller.run("initial");

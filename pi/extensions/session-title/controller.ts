@@ -90,6 +90,14 @@ export function createController(runtime: ControllerRuntime): TitleController {
       if (!normalized || normalized === ownName) return;
       ownName = normalized;
       titled = true;
+
+      // This is an external rename (not our own echo): a manually set name
+      // must never be clobbered by a title that was already in flight, so
+      // discard it exactly as shutdown() would.
+      sequence += 1;
+      active?.abort(new Error("session renamed externally"));
+      active = undefined;
+
       runtime.appendMarker({ kind: "user", name: normalized, timestamp: runtime.now() });
       runtime.debug(`external session name observed: ${normalized}`);
     },
