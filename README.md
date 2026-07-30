@@ -20,7 +20,6 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | [`code-review`](pi/extensions/code-review) | A review workflow over uncommitted, committed, or branch changes, via `/review` and `/end-review`. Forked from [pi-review](https://github.com/earendil-works/pi-review). |
 | [`copilot-usage`](pi/extensions/copilot-usage) | Reports remaining GitHub Copilot premium requests through `/copilot-usage`, reusing pi's own Copilot OAuth token. |
 | [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Corrects the context-window and max-output limits pi ships for Copilot models by reading them from the Copilot API at startup. A stopgap until [pi#2527](https://github.com/earendil-works/pi/pull/2527) ships. |
-| [`nono-hook`](pi/extensions/nono-hook) | Turns sandbox denials into actionable errors when pi runs inside the [nono](https://nono.sh) sandbox. |
 
 Each extension documents its own configuration in its README.
 
