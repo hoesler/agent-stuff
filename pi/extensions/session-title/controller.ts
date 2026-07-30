@@ -34,7 +34,11 @@ export interface TitleController {
   restore(titled: boolean, existingName: string | undefined): void;
   /** React to `session_info_changed`. */
   observeNameChange(name: string | undefined): void;
-  /** Whether automatic titling should stand down. */
+  /**
+   * Whether automatic titling should stand down: the session already has a
+   * name, an external rename was observed, or the one automatic attempt has
+   * already been made (successful or not).
+   */
   isTitled(): boolean;
   run(mode: TitleMode): Promise<string | undefined>;
   shutdown(): void;
@@ -95,12 +99,18 @@ export function createController(runtime: ControllerRuntime): TitleController {
     },
 
     async run(mode) {
-      if (mode !== "manual" && !runtime.isEnabled()) return undefined;
+      if (mode !== "manual" && (!runtime.isEnabled() || titled)) return undefined;
 
       active?.abort(new Error("superseded by a newer titling request"));
       const controller = new AbortController();
       active = controller;
       const requestSequence = ++sequence;
+
+      // An automatic session gets exactly one attempt, successful or not: latch
+      // before the call so a provider failure never triggers a retry on the next
+      // agent_settled. A manual run must not latch — a failed /title should not
+      // block later automatic titling.
+      if (mode !== "manual") titled = true;
 
       try {
         const name = await runtime.generateTitle({

@@ -82,6 +82,26 @@ test("a throwing generator writes nothing and does not reject", async () => {
   assert.deepEqual(h.names, []);
 });
 
+test("a failed initial run latches so it is not retried", async () => {
+  let calls = 0;
+  const h = harness(async () => {
+    calls += 1;
+    throw new Error("provider down");
+  });
+  assert.equal(await h.controller.run("initial"), undefined);
+  assert.equal(h.controller.isTitled(), true, "one automatic attempt is spent, successful or not");
+  assert.equal(await h.controller.run("initial"), undefined);
+  assert.equal(calls, 1, "a second automatic run must not call the generator again");
+});
+
+test("a failed manual run does not latch, so automatic titling remains possible", async () => {
+  const h = harness(async () => {
+    throw new Error("provider down");
+  });
+  assert.equal(await h.controller.run("manual"), undefined);
+  assert.equal(h.controller.isTitled(), false, "a failed /title must not block later automatic titling");
+});
+
 test("a superseded request is aborted and its result discarded", async () => {
   let firstSignal: AbortSignal | undefined;
   let releaseFirst: (() => void) | undefined;
