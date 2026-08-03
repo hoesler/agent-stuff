@@ -15,7 +15,7 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | Extension | What it does |
 | --- | --- |
 | [`model-modes`](pi/extensions/model-modes) | Bundles a provider, model, and thinking level into one named mode. `/mode` selects one, a shortcut cycles them, and a configured default applies at startup. |
-| [`subagent`](pi/extensions/subagent) | Delegates a task to a subagent running in its own `pi` process and context window. Single, parallel, and chained modes, with personas discovered from `agents/` directories. |
+| [`subagent`](pi/extensions/subagent) | Delegates a task to a subagent running in its own `pi` process and context window. Single, parallel, and chained modes. Personas come from `~/.pi/agent/agents` and trusted `.pi/agents`, and the discovered catalog is baked into the tool schema so the caller cannot name one that does not exist. |
 | [`session-title`](pi/extensions/session-title) | Names a session from its first exchange using a cheap, explicitly configured model. `/title` re-titles on demand. |
 | [`code-review`](pi/extensions/code-review) | A review workflow over uncommitted, committed, or branch changes, via `/review` and `/end-review`. Forked from [pi-review](https://github.com/earendil-works/pi-review). |
 | [`copilot-usage`](pi/extensions/copilot-usage) | Reports remaining GitHub Copilot premium requests through `/copilot-usage`, reusing pi's own Copilot OAuth token. |
