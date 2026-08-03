@@ -12,27 +12,44 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	type AgentToolResult,
 	type ExtensionAPI,
+	getAgentDir,
 	getMarkdownTheme,
+	type ToolDefinition,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import { type TSchema, Type } from "typebox";
+import {
+	type AgentConfig,
+	type AgentDiscoveryResult,
+	type AgentSource,
+	discoverAgents,
+	suggestAgentName,
+} from "./agents.ts";
+import { buildAgentNameSchema, buildToolDescription, formatAgentNames } from "./catalog.ts";
 import {
 	formatModelDisplay,
 	type ModelSource,
 	resolveModelFromMessage,
 	resolveModelSelection,
-} from "./model-display.js";
+} from "./model-display.ts";
+
+/**
+ * Persona files this package ships as starting points. They are examples to
+ * copy into `~/.pi/agent/agents`, never a live source of personas: keeping them
+ * inert means there is nothing to disable and nothing to shadow, and deleting
+ * or editing a copied file is the whole of deactivating or overriding it.
+ */
+const EXAMPLE_AGENTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "examples", "agents");
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -151,7 +168,7 @@ interface UsageStats {
 
 interface SingleResult {
 	agent: string;
-	agentSource: "user" | "project" | "unknown";
+	agentSource: AgentSource | "unknown";
 	task: string;
 	exitCode: number;
 	messages: Message[];
@@ -170,9 +187,27 @@ interface SingleResult {
 
 interface SubagentDetails {
 	mode: "single" | "parallel" | "chain";
-	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
+}
+
+/** Terminal states a run can end in: a non-zero exit, or a stop the child or we ourselves forced. */
+const FAILED_STOP_REASONS = new Set(["error", "aborted", "timeout"]);
+
+function isFailedResult(result: SingleResult): boolean {
+	return result.exitCode !== 0 || (result.stopReason !== undefined && FAILED_STOP_REASONS.has(result.stopReason));
+}
+
+/**
+ * Why a run failed, plus whatever it produced first. A run killed part-way
+ * usually has useful partial output, and for a timeout that partial output is
+ * the only signal the caller has for choosing a larger budget next time.
+ */
+function describeFailure(result: SingleResult): string {
+	const reason = result.errorMessage || result.stderr.trim() || "";
+	const partial = getFinalOutput(result.messages).trim();
+	if (reason && partial) return `${reason}\n\nPartial output before termination:\n${partial}`;
+	return reason || partial || "(no output)";
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -250,23 +285,48 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
-async function runSingleAgent(
-	defaultCwd: string,
-	agents: AgentConfig[],
-	agentName: string,
-	task: string,
-	cwd: string | undefined,
-	step: number | undefined,
-	signal: AbortSignal | undefined,
-	onUpdate: OnUpdateCallback | undefined,
-	makeDetails: (results: SingleResult[]) => SubagentDetails,
-	taskModel?: string,
-	globalModel?: string,
-): Promise<SingleResult> {
+/**
+ * Spawns the child pi process. Injectable so the termination logic — timeout,
+ * abort, and the partial result each produces — can be tested against a real
+ * child process without a running pi.
+ */
+export type SpawnChild = (args: string[], cwd: string) => ChildProcess;
+
+const spawnPi: SpawnChild = (args, cwd) => {
+	const invocation = getPiInvocation(args);
+	return spawn(invocation.command, invocation.args, {
+		cwd,
+		shell: false,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+};
+
+interface RunAgentOptions {
+	defaultCwd: string;
+	agents: AgentConfig[];
+	agentName: string;
+	task: string;
+	cwd?: string;
+	/** 1-based position within a chain; absent for single and parallel runs. */
+	step?: number;
+	signal?: AbortSignal;
+	onUpdate?: OnUpdateCallback;
+	makeDetails: (results: SingleResult[]) => SubagentDetails;
+	taskModel?: string;
+	globalModel?: string;
+	/** Wall-clock budget for this run. Absent means the run is unbounded. */
+	timeoutSeconds?: number;
+	/** Overridden in tests; defaults to spawning the real child pi. */
+	spawnChild?: SpawnChild;
+}
+
+export async function runSingleAgent(options: RunAgentOptions): Promise<SingleResult> {
+	const { defaultCwd, agents, agentName, task, step, signal, onUpdate, makeDetails, taskModel, globalModel } = options;
 	const agent = agents.find((a) => a.name === agentName);
 
 	if (!agent) {
-		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
+		const suggestion = suggestAgentName(agentName, agents);
+		const didYouMean = suggestion ? ` Did you mean "${suggestion}"?` : "";
 		const selection = resolveModelSelection(taskModel, globalModel, undefined);
 		return {
 			agent: agentName,
@@ -274,7 +334,7 @@ async function runSingleAgent(
 			task,
 			exitCode: 1,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: `Unknown agent: "${agentName}".${didYouMean} Available agents: ${formatAgentNames(agents)}.`,
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			requestedModel: selection.model,
 			modelSource: selection.source,
@@ -321,15 +381,17 @@ async function runSingleAgent(
 		}
 
 		args.push(`Task: ${task}`);
-		let wasAborted = false;
+
+		// Only positive, finite budgets bound the run; anything else means unbounded,
+		// so a malformed value cannot silently kill a subagent on the spot.
+		const timeoutMs =
+			options.timeoutSeconds && Number.isFinite(options.timeoutSeconds) && options.timeoutSeconds > 0
+				? options.timeoutSeconds * 1000
+				: undefined;
+		let termination: "aborted" | "timeout" | undefined;
 
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd: cwd ?? defaultCwd,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-			});
+			const proc = (options.spawnChild ?? spawnPi)(args, options.cwd ?? defaultCwd);
 			let buffer = "";
 
 			const processLine = (line: string) => {
@@ -369,41 +431,70 @@ async function runSingleAgent(
 				}
 			};
 
-			proc.stdout.on("data", (data) => {
+			proc.stdout?.on("data", (data) => {
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 				for (const line of lines) processLine(line);
 			});
 
-			proc.stderr.on("data", (data) => {
+			proc.stderr?.on("data", (data) => {
 				currentResult.stderr += data.toString();
 			});
 
+			let killTimer: NodeJS.Timeout | undefined;
+			let budgetTimer: NodeJS.Timeout | undefined;
+
+			const terminate = (reason: "aborted" | "timeout") => {
+				termination ??= reason;
+				proc.kill("SIGTERM");
+				killTimer ??= setTimeout(() => {
+					if (!proc.killed) proc.kill("SIGKILL");
+				}, 5000);
+			};
+			const onAbort = () => terminate("aborted");
+
+			// Every timer and listener is bound to this one child, so all of them are
+			// released when it exits: a chain reusing one signal across steps would
+			// otherwise leave a listener per completed step, and the SIGKILL fallback
+			// would hold the event loop open for five seconds after a clean exit.
+			const cleanup = () => {
+				if (killTimer) clearTimeout(killTimer);
+				if (budgetTimer) clearTimeout(budgetTimer);
+				signal?.removeEventListener("abort", onAbort);
+			};
+
 			proc.on("close", (code) => {
+				cleanup();
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});
 
 			proc.on("error", () => {
+				cleanup();
 				resolve(1);
 			});
 
+			if (timeoutMs !== undefined) budgetTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+
 			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
-				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				if (signal.aborted) terminate("aborted");
+				else signal.addEventListener("abort", onAbort, { once: true });
 			}
 		});
 
 		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		if (termination) {
+			// Return the partial run rather than throwing it away. Everything the child
+			// produced before it was killed — output, tool calls, usage, cost — is
+			// already on `currentResult`, and for a chain or a parallel batch, throwing
+			// here would discard its siblings' completed results too.
+			currentResult.stopReason = termination;
+			if (termination === "timeout") {
+				currentResult.errorMessage = `Timed out after ${options.timeoutSeconds}s and was terminated.`;
+			}
+			if (currentResult.exitCode === 0) currentResult.exitCode = 1;
+		}
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
@@ -421,55 +512,102 @@ async function runSingleAgent(
 	}
 }
 
-const TaskItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task to delegate to the agent" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	model: Type.Optional(Type.String({ description: "Model override for this task (takes precedence over global model and agent frontmatter)" })),
-});
+/**
+ * The `agent` field's schema is rebuilt whenever the catalog changes, so the
+ * shapes below are built per registration rather than defined once at module
+ * scope.
+ */
+function buildSubagentParams(agents: AgentConfig[]): TSchema {
+	const agentName = buildAgentNameSchema(agents, EXAMPLE_AGENTS_DIR);
 
-const ChainItem = Type.Object({
-	agent: Type.String({ description: "Name of the agent to invoke" }),
-	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-	model: Type.Optional(Type.String({ description: "Model override for this step (takes precedence over global model and agent frontmatter)" })),
-});
+	const TaskItem = Type.Object({
+		agent: agentName,
+		task: Type.String({ description: "Task to delegate to the agent" }),
+		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+		model: Type.Optional(Type.String({ description: "Model override for this task (takes precedence over global model and agent frontmatter)" })),
+		timeoutSeconds: Type.Optional(
+			Type.Number({
+				minimum: 1,
+				description:
+					"Wall-clock budget for this task, in seconds. Size it to the work you are delegating; omit it to let the task run unbounded. On expiry the subagent is terminated and whatever it produced so far is returned.",
+			}),
+		),
+	});
 
-const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
-	default: "user",
-});
+	const ChainItem = Type.Object({
+		agent: agentName,
+		task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
+		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+		model: Type.Optional(Type.String({ description: "Model override for this step (takes precedence over global model and agent frontmatter)" })),
+		timeoutSeconds: Type.Optional(
+			Type.Number({
+				minimum: 1,
+				description:
+					"Wall-clock budget for this step, in seconds. Size it to the work you are delegating; omit it to let the step run unbounded. On expiry the subagent is terminated, whatever it produced so far is returned, and the chain stops.",
+			}),
+		),
+	});
 
-const SubagentParams = Type.Object({
-	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
-	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
-	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
-	model: Type.Optional(Type.String({ description: "Global model override for all tasks in this call. Per-task model takes precedence; both override agent frontmatter." })),
-	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
-	),
-	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
-});
+	return Type.Object({
+		agent: Type.Optional(agentName),
+		task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
+		tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
+		chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
+		model: Type.Optional(Type.String({ description: "Global model override for all tasks in this call. Per-task model takes precedence; both override agent frontmatter." })),
+		timeoutSeconds: Type.Optional(
+			Type.Number({
+				minimum: 1,
+				description:
+					"Wall-clock budget applied to every task in this call, in seconds. A per-task or per-step timeoutSeconds takes precedence. Omit to leave runs unbounded — there is no default, since only you know how long the delegated work should take.",
+			}),
+		),
+		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	});
+}
 
-export default function (pi: ExtensionAPI) {
-	pi.registerTool({
+/**
+ * Runtime view of the parameters. The schema is built dynamically, so `Static`
+ * cannot describe it; `execute` and the renderers cast to this instead.
+ */
+interface SubagentCallItem {
+	agent: string;
+	task: string;
+	cwd?: string;
+	model?: string;
+	timeoutSeconds?: number;
+}
+
+interface SubagentCallParams {
+	agent?: string;
+	task?: string;
+	tasks?: SubagentCallItem[];
+	chain?: SubagentCallItem[];
+	model?: string;
+	cwd?: string;
+	timeoutSeconds?: number;
+}
+
+/** Identity of a catalog, for deciding whether a re-registration is worthwhile. */
+function catalogFingerprint(result: AgentDiscoveryResult): string {
+	return result.agents.map((a) => `${a.source}:${a.name}:${a.description}`).join("|");
+}
+
+/**
+ * Build the tool definition for one catalog snapshot. Re-invoked whenever
+ * discovery changes: `registerTool` is keyed by tool name, so re-registering
+ * replaces the definition and refreshes the live tool list.
+ */
+function createSubagentTool(discovery: AgentDiscoveryResult): ToolDefinition<TSchema, SubagentDetails> {
+	const agents = discovery.agents;
+
+	return {
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
-		].join(" "),
-		parameters: SubagentParams,
+		description: buildToolDescription(agents, EXAMPLE_AGENTS_DIR),
+		parameters: buildSubagentParams(agents),
 
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
-			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
+		async execute(_toolCallId, rawParams, signal, onUpdate, ctx) {
+			const params = rawParams as SubagentCallParams;
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -480,25 +618,27 @@ export default function (pi: ExtensionAPI) {
 				(mode: "single" | "parallel" | "chain") =>
 				(results: SingleResult[]): SubagentDetails => ({
 					mode,
-					agentScope,
 					projectAgentsDir: discovery.projectAgentsDir,
 					results,
 				});
 
 			if (modeCount !== 1) {
-				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
+							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${formatAgentNames(agents)}`,
 						},
 					],
 					details: makeDetails("single")([]),
+					isError: true,
 				};
 			}
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			// Project personas are repo-controlled, so each run is confirmed separately
+			// from pi's folder-level trust. Deliberately not a tool parameter: the
+			// caller must not be able to waive its own gate.
+			if (ctx.hasUI) {
 				const requestedAgentNames = new Set<string>();
 				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
 				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
@@ -529,7 +669,9 @@ export default function (pi: ExtensionAPI) {
 
 				for (let i = 0; i < params.chain.length; i++) {
 					const step = params.chain[i];
-					const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
+					// Replacer function, not a string: a `$&` or `$1` in the prior
+					// step's output would otherwise be read as a replacement pattern.
+					const taskWithContext = step.task.replace(/\{previous\}/g, () => previousOutput);
 
 					// Create update callback that includes all previous results
 					const chainUpdate: OnUpdateCallback | undefined = onUpdate
@@ -546,28 +688,31 @@ export default function (pi: ExtensionAPI) {
 							}
 						: undefined;
 
-					const result = await runSingleAgent(
-						ctx.cwd,
+					const result = await runSingleAgent({
+						defaultCwd: ctx.cwd,
 						agents,
-						step.agent,
-						taskWithContext,
-						step.cwd,
-						i + 1,
+						agentName: step.agent,
+						task: taskWithContext,
+						cwd: step.cwd,
+						step: i + 1,
 						signal,
-						chainUpdate,
-						makeDetails("chain"),
-						step.model,
-						params.model,
-					);
+						onUpdate: chainUpdate,
+						makeDetails: makeDetails("chain"),
+						taskModel: step.model,
+						globalModel: params.model,
+						timeoutSeconds: step.timeoutSeconds ?? params.timeoutSeconds,
+					});
 					results.push(result);
 
-					const isError =
-						result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+					const isError = isFailedResult(result);
 					if (isError) {
-						const errorMsg =
-							result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
 						return {
-							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
+							content: [
+								{
+									type: "text",
+									text: `Chain stopped at step ${i + 1} (${step.agent}): ${describeFailure(result)}`,
+								},
+							],
 							details: makeDetails("chain")(results),
 							isError: true,
 						};
@@ -625,35 +770,40 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingleAgent(
-						ctx.cwd,
+					const result = await runSingleAgent({
+						defaultCwd: ctx.cwd,
 						agents,
-						t.agent,
-						t.task,
-						t.cwd,
-						undefined,
+						agentName: t.agent,
+						task: t.task,
+						cwd: t.cwd,
 						signal,
 						// Per-task update callback
-						(partial) => {
+						onUpdate: (partial) => {
 							if (partial.details?.results[0]) {
 								allResults[index] = partial.details.results[0];
 								emitParallelUpdate();
 							}
 						},
-						makeDetails("parallel"),
-						t.model,
-						params.model,
-					);
+						makeDetails: makeDetails("parallel"),
+						taskModel: t.model,
+						globalModel: params.model,
+						timeoutSeconds: t.timeoutSeconds ?? params.timeoutSeconds,
+					});
 					allResults[index] = result;
 					emitParallelUpdate();
 					return result;
 				});
 
-				const successCount = results.filter((r) => r.exitCode === 0).length;
+				const successCount = results.filter((r) => !isFailedResult(r)).length;
 				const summaries = results.map((r) => {
+					if (isFailedResult(r)) {
+						// Surface the failure reason itself: an unknown-agent error carries
+						// the available-agent list the caller needs in order to retry.
+						return `[${r.agent}] ${r.stopReason ?? "failed"}: ${describeFailure(r)}`;
+					}
 					const output = getFinalOutput(r.messages);
 					const preview = output.slice(0, 100) + (output.length > 100 ? "..." : "");
-					return `[${r.agent}] ${r.exitCode === 0 ? "completed" : "failed"}: ${preview || "(no output)"}`;
+					return `[${r.agent}] completed: ${preview || "(no output)"}`;
 				});
 				return {
 					content: [
@@ -663,29 +813,27 @@ export default function (pi: ExtensionAPI) {
 						},
 					],
 					details: makeDetails("parallel")(results),
+					isError: successCount === 0,
 				};
 			}
 
 			if (params.agent && params.task) {
-				const result = await runSingleAgent(
-					ctx.cwd,
+				const result = await runSingleAgent({
+					defaultCwd: ctx.cwd,
 					agents,
-					params.agent,
-					params.task,
-					params.cwd,
-					undefined,
+					agentName: params.agent,
+					task: params.task,
+					cwd: params.cwd,
 					signal,
 					onUpdate,
-					makeDetails("single"),
-					undefined,
-					params.model,
-				);
-				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+					makeDetails: makeDetails("single"),
+					globalModel: params.model,
+					timeoutSeconds: params.timeoutSeconds,
+				});
+				const isError = isFailedResult(result);
 				if (isError) {
-					const errorMsg =
-						result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
 					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
+						content: [{ type: "text", text: `Agent ${result.stopReason ?? "failed"}: ${describeFailure(result)}` }],
 						details: makeDetails("single")([result]),
 						isError: true,
 					};
@@ -696,20 +844,24 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 			return {
-				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
+				content: [{ type: "text", text: `Invalid parameters. Available agents: ${formatAgentNames(agents)}` }],
 				details: makeDetails("single")([]),
+				isError: true,
 			};
 		},
 
-		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+		renderCall(rawArgs, theme, _context) {
+			const args = rawArgs as SubagentCallParams;
+			// Badge the persona's origin so a repo-controlled agent is visible at a glance.
+			const sourceBadge = (name: string | undefined) => {
+				const source = agents.find((a) => a.name === name)?.source;
+				return source ? theme.fg("muted", ` [${source}]`) : "";
+			};
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
-					theme.fg("accent", `chain (${args.chain.length} steps)`) +
-					theme.fg("muted", ` [${scope}]`);
+					theme.fg("accent", `chain (${args.chain.length} steps)`);
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
 					// Clean up {previous} placeholder for display
@@ -720,6 +872,7 @@ export default function (pi: ExtensionAPI) {
 						theme.fg("muted", `${i + 1}.`) +
 						" " +
 						theme.fg("accent", step.agent) +
+						sourceBadge(step.agent) +
 						theme.fg("dim", ` ${preview}`);
 				}
 				if (args.chain.length > 3) text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
@@ -728,11 +881,10 @@ export default function (pi: ExtensionAPI) {
 			if (args.tasks && args.tasks.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
-					theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-					theme.fg("muted", ` [${scope}]`);
+					theme.fg("accent", `parallel (${args.tasks.length} tasks)`);
 				for (const t of args.tasks.slice(0, 3)) {
 					const preview = t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
-					text += `\n  ${theme.fg("accent", t.agent)}${theme.fg("dim", ` ${preview}`)}`;
+					text += `\n  ${theme.fg("accent", t.agent)}${sourceBadge(t.agent)}${theme.fg("dim", ` ${preview}`)}`;
 				}
 				if (args.tasks.length > 3) text += `\n  ${theme.fg("muted", `... +${args.tasks.length - 3} more`)}`;
 				return new Text(text, 0, 0);
@@ -742,7 +894,7 @@ export default function (pi: ExtensionAPI) {
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
-				theme.fg("muted", ` [${scope}]`);
+				sourceBadge(args.agent);
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
@@ -774,7 +926,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
-				const isError = r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted";
+				const isError = isFailedResult(r);
 				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getFinalOutput(r.messages);
@@ -1017,5 +1169,36 @@ export default function (pi: ExtensionAPI) {
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 		},
+	};
+}
+
+export default function (pi: ExtensionAPI) {
+	const userAgentsDir = path.join(getAgentDir(), "agents");
+
+	/**
+	 * Load-time discovery leaves project personas out: pi's trust decision is only
+	 * readable from an event context, and `.pi/agents` is repo-controlled content
+	 * whose descriptions would otherwise reach the model unvetted. `session_start`
+	 * re-runs discovery with the session's real cwd and trust state.
+	 */
+	let discovery = discoverAgents({
+		cwd: process.cwd(),
+		userDir: userAgentsDir,
+		includeProject: false,
+	});
+	let fingerprint = catalogFingerprint(discovery);
+	pi.registerTool(createSubagentTool(discovery));
+
+	pi.on("session_start", (_event, ctx) => {
+		const next = discoverAgents({
+			cwd: ctx.cwd,
+			userDir: userAgentsDir,
+			includeProject: ctx.isProjectTrusted(),
+		});
+		const nextFingerprint = catalogFingerprint(next);
+		if (nextFingerprint === fingerprint) return;
+		discovery = next;
+		fingerprint = nextFingerprint;
+		pi.registerTool(createSubagentTool(discovery));
 	});
 }

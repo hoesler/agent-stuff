@@ -10,16 +10,55 @@ Delegate tasks to specialized subagents, each running in a separate `pi` process
 
 Exactly one mode must be provided per call.
 
+## Timeouts
+
+`timeoutSeconds` bounds a run's wall clock. It is set per task or per step, with a whole-call value as the fallback — the same precedence as `model`. There is deliberately no default: only the caller knows whether it asked for a one-file read or a module-wide refactor, and any number this extension picked would be wrong for one of them. Omitted, a run is unbounded, exactly as before.
+
+On expiry the child gets `SIGTERM`, then `SIGKILL` five seconds later if it is still alive. The run is *not* discarded: it comes back with `stopReason: "timeout"`, an error message naming the budget, and everything the subagent produced before it was killed — output, tool calls, tokens, and cost. For a timeout that partial output is the main evidence for choosing a larger budget on the retry.
+
+## Termination and partial results
+
+A run killed from outside — by `timeoutSeconds`, or by the user aborting the turn — returns its partial result rather than throwing. That matters most in the modes that batch work: a chain aborted at step 3 still reports steps 1 and 2, and a parallel batch still reports the tasks that had already finished, including their cost. Throwing would discard all of it, along with the record of money already spent.
+
+Every timer and listener is scoped to one child process and released when it exits, so a chain that reuses a single abort signal across steps does not accumulate a listener per completed step.
+
 ## Agents
 
-Agents are discovered from Markdown files with frontmatter:
+Agents are discovered from Markdown files with frontmatter, in two places:
 
-- User agents: `~/.pi/agent/agents/*.md`
-- Project agents: nearest `.pi/agents/*.md` above the current working directory
+| Source    | Directory                                                     |
+| --------- | ------------------------------------------------------------- |
+| `user`    | `~/.pi/agent/agents/*.md`                                       |
+| `project` | nearest `.pi/agents/*.md` above the current working directory   |
 
-Each agent file's frontmatter supports `name`, `description`, `tools` (comma-separated), and `model`. The Markdown body becomes the subagent's system prompt.
+A name defined in both resolves to the project file, so a repo can shadow one of your own personas.
 
-Use `agentScope` to control which agents are visible: `"user"` (default), `"project"`, or `"both"`. Running project-local agents prompts for confirmation in interactive sessions (`confirmProjectAgents`, default `true`) since project agents are repo-controlled.
+Each agent file's frontmatter supports `name`, `description`, `tools` (comma-separated), and `model`. The Markdown body becomes the subagent's system prompt. Files missing `name` or `description` are skipped.
+
+### Examples
+
+`examples/agents/` holds four personas to copy and edit — `general-purpose`, `planner`, `reviewer`, and `scout`:
+
+```bash
+mkdir -p ~/.pi/agent/agents
+cp pi/extensions/subagent/examples/agents/scout.md ~/.pi/agent/agents/
+```
+
+They are examples, not defaults: nothing loads them where they sit. That keeps every persona a file you own, so deactivating one is deleting it and overriding one is editing it — there is no separate enable/disable layer, and nothing shadows anything you wrote.
+
+### Project agents and trust
+
+Project personas are repo-controlled: both their prompt bodies and their descriptions end up in the model's context. They are therefore included only when pi has marked the project trusted, and each run is confirmed separately in interactive sessions. That confirmation is deliberately not a tool parameter — the calling agent must not be able to waive its own gate.
+
+## The catalog
+
+The set of available personas is part of the tool contract, not the system prompt: descriptions of active tools are sent with every request anyway, and only the parameter schema can turn an invented persona name into a validation failure rather than a runtime error.
+
+Concretely, the `agent` field is a closed enum over the discovered names, and both it and the tool description carry the full `name (source) — description` catalog. Providers that constrain decoding to the tool schema cannot emit a name outside it; where a name does slip through, the error names the closest match (`Unknown agent: "code-reviewer". Did you mean "reviewer"? Available agents: ...`) so the caller can correct itself in one turn.
+
+With no personas configured at all, the `agent` field falls back to a plain string — an empty enum is not valid JSON Schema for several providers. Its description then carries the setup instructions instead of a catalog, naming both `~/.pi/agent/agents` and the examples directory, and telling the caller not to invoke the tool until a persona exists. A fresh install therefore reports that it has nothing to delegate to, rather than leaving the model to invent a name.
+
+The catalog is built at extension load and rebuilt on `session_start`, once the session's real working directory and trust decision are known. `registerTool` is keyed by tool name, so re-registering replaces the definition and refreshes the live tool list; re-registration is skipped when the catalog is unchanged.
 
 ## Model selection
 
@@ -60,8 +99,10 @@ For chain and parallel modes, each expanded step/task line shows its own resolve
 
 ## Testing
 
-Pure model-selection and display logic lives in `model-display.ts` and is covered by `model-display.test.ts`:
+The logic that does not need a running pi is split into pure modules with colocated tests: discovery and name matching in `agents.ts`, the tool contract in `catalog.ts`, and model selection and display in `model-display.ts`.
+
+`run.test.ts` covers termination — timeout, abort, and the partial result each returns. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated.
 
 ```bash
-node --test pi/extensions/subagent/model-display.test.ts
+node --test pi/extensions/subagent/*.test.ts
 ```

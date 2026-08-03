@@ -4,9 +4,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
-export type AgentScope = "user" | "project" | "both";
+/**
+ * Where a persona came from. A name defined in both places resolves to the
+ * project file, so a repo can shadow one of the user's own personas.
+ */
+export type AgentSource = "user" | "project";
+
+const SOURCE_PRECEDENCE: AgentSource[] = ["user", "project"];
 
 export interface AgentConfig {
 	name: string;
@@ -14,16 +20,30 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	systemPrompt: string;
-	source: "user" | "project";
+	source: AgentSource;
 	filePath: string;
 }
 
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
 	projectAgentsDir: string | null;
+	/** True when a project agents directory exists but was excluded for lack of trust. */
+	projectAgentsSkipped: boolean;
 }
 
-function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
+export interface DiscoverAgentsOptions {
+	cwd: string;
+	/** The user's own persona directory (`~/.pi/agent/agents`). */
+	userDir: string;
+	/**
+	 * Whether to include project-local personas. Callers pass pi's own
+	 * project-trust decision: `.pi/agents` is repo-controlled content, and both
+	 * its prompt bodies and its descriptions end up in the model's context.
+	 */
+	includeProject: boolean;
+}
+
+function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
 	if (!fs.existsSync(dir)) {
@@ -82,7 +102,7 @@ function isDirectory(p: string): boolean {
 	}
 }
 
-function findNearestProjectAgentsDir(cwd: string): string | null {
+export function findNearestProjectAgentsDir(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
 		const candidate = path.join(currentDir, ".pi", "agents");
@@ -94,33 +114,68 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 	}
 }
 
-export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDir = path.join(getAgentDir(), "agents");
-	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+/**
+ * Collect every persona visible to this session, sorted by name so the catalog
+ * the model sees is stable across turns.
+ */
+export function discoverAgents(options: DiscoverAgentsOptions): AgentDiscoveryResult {
+	const projectAgentsDir = findNearestProjectAgentsDir(options.cwd);
+	const includeProject = options.includeProject && projectAgentsDir !== null;
 
-	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
-	const projectAgents = scope === "user" || !projectAgentsDir ? [] : loadAgentsFromDir(projectAgentsDir, "project");
+	const byName = new Map<string, AgentConfig>();
+	const loaded: AgentConfig[] = [
+		...loadAgentsFromDir(options.userDir, "user"),
+		...(includeProject ? loadAgentsFromDir(projectAgentsDir as string, "project") : []),
+	];
 
-	const agentMap = new Map<string, AgentConfig>();
-
-	if (scope === "both") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	} else if (scope === "user") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-	} else {
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
+	for (const agent of loaded) {
+		const existing = byName.get(agent.name);
+		if (existing && SOURCE_PRECEDENCE.indexOf(agent.source) < SOURCE_PRECEDENCE.indexOf(existing.source)) {
+			continue;
+		}
+		byName.set(agent.name, agent);
 	}
 
-	return { agents: Array.from(agentMap.values()), projectAgentsDir };
+	return {
+		agents: Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)),
+		projectAgentsDir,
+		projectAgentsSkipped: projectAgentsDir !== null && !options.includeProject,
+	};
 }
 
-export function formatAgentList(agents: AgentConfig[], maxItems: number): { text: string; remaining: number } {
-	if (agents.length === 0) return { text: "none", remaining: 0 };
-	const listed = agents.slice(0, maxItems);
-	const remaining = agents.length - listed.length;
-	return {
-		text: listed.map((a) => `${a.name} (${a.source}): ${a.description}`).join("; "),
-		remaining,
-	};
+function editDistance(a: string, b: string): number {
+	let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+		}
+		previous = current;
+	}
+	return previous[b.length];
+}
+
+/**
+ * Best "did you mean" candidate for a name that matched no persona. A model
+ * that invents a plausible-looking name (`code-reviewer` for `reviewer`) can
+ * then correct itself in one turn instead of guessing again.
+ */
+export function suggestAgentName(requested: string, agents: AgentConfig[]): string | undefined {
+	const target = requested.trim().toLowerCase();
+	if (!target) return undefined;
+
+	const caseInsensitive = agents.find((a) => a.name.toLowerCase() === target);
+	if (caseInsensitive) return caseInsensitive.name;
+
+	let best: { name: string; distance: number } | undefined;
+	for (const agent of agents) {
+		const candidate = agent.name.toLowerCase();
+		const distance = candidate.includes(target) || target.includes(candidate) ? 1 : editDistance(target, candidate);
+		if (!best || distance < best.distance) best = { name: agent.name, distance };
+	}
+
+	if (!best) return undefined;
+	const budget = Math.max(2, Math.floor(target.length * 0.4));
+	return best.distance <= budget ? best.name : undefined;
 }
