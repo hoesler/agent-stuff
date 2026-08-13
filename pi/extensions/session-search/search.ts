@@ -9,6 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { EvidenceRow } from "./extract.ts";
 import { matchesGlob } from "./ingest.ts";
 import { type Candidate, type FileNode, chooseOrigin, familyRoot } from "./lineage.ts";
+import type { ScopeFilter } from "./scope.ts";
 import { type BranchInfo, type Skeleton, classifyEntry, pathToRoot } from "./tree.ts";
 
 export interface SearchParams {
@@ -16,7 +17,8 @@ export interface SearchParams {
   touched?: string;
   action?: "read" | "write" | "any";
   command?: string;
-  cwd?: string;
+  /** Already resolved against the world; see `scope.ts`. */
+  scope?: ScopeFilter;
   after?: string;
   before?: string;
   role?: "user" | "assistant" | "any";
@@ -124,9 +126,19 @@ function buildQuery(params: SearchParams, now: Date): { sql: string; args: unkno
     args.push(params.command);
   }
 
-  if (params.cwd) {
+  // A root matches itself and everything below it. The `/` matters: a bare
+  // `<root>*` prefix would also swallow a sibling `repo-old`.
+  if (params.scope && params.scope.kind === "roots") {
+    const roots = params.scope.roots;
+    wheres.push(roots.length > 0 ? `(${roots.map(() => "(f.cwd = ? OR f.cwd GLOB ?)").join(" OR ")})` : "1 = 0");
+    for (const root of roots) args.push(root, `${root}/*`);
+  } else if (params.scope && params.scope.kind === "paths") {
+    const paths = params.scope.paths;
+    wheres.push(paths.length > 0 ? `f.path IN (${paths.map(() => "?").join(", ")})` : "1 = 0");
+    args.push(...paths);
+  } else if (params.scope && params.scope.kind === "glob") {
     wheres.push("f.cwd GLOB ?");
-    args.push(globToLike(params.cwd));
+    args.push(globToLike(params.scope.pattern));
   }
 
   if (params.role && params.role !== "any") {
@@ -168,7 +180,7 @@ function snippetOf(row: CandidateRow, maxChars: number): string | undefined {
   return flat.length > maxChars ? `${flat.slice(0, maxChars)}…` : flat;
 }
 
-function loadFileNodes(db: DatabaseSync): FileNode[] {
+export function loadFileNodes(db: DatabaseSync): FileNode[] {
   return (db.prepare("SELECT path, parent_path AS parentPath, created FROM files").all() as any[]).map(
     (row) => ({
       path: row.path as string,
