@@ -104,14 +104,15 @@ export function entryLine(entry: FixtureEntry, index = 0): string {
   });
 }
 
-function headerLine(session: FixtureSession): string {
+function headerLine(root: string, session: FixtureSession): string {
   return JSON.stringify({
     type: "session",
     version: 3,
     id: session.id,
     timestamp: session.created ?? new Date(BASE_TIME).toISOString(),
     cwd: session.cwd,
-    ...(session.parentSession ? { parentSession: session.parentSession } : {}),
+    // pi stores the parent as a full path, so fixtures do too.
+    ...(session.parentSession ? { parentSession: join(root, session.parentSession) } : {}),
   });
 }
 
@@ -119,7 +120,10 @@ function headerLine(session: FixtureSession): string {
 export function writeSession(root: string, session: FixtureSession): string {
   const path = join(root, session.path);
   mkdirSync(dirname(path), { recursive: true });
-  const lines = [headerLine(session), ...session.entries.map((entry, index) => entryLine(entry, index))];
+  const lines = [
+    headerLine(root, session),
+    ...session.entries.map((entry, index) => entryLine(entry, index)),
+  ];
   writeFileSync(path, `${lines.join("\n")}\n`);
   return path;
 }
