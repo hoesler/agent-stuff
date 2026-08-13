@@ -7,7 +7,7 @@
  * The filesystem is the shared channel that events are not.
  */
 
-import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
+import { type Dirent, closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export interface SessionFile {
@@ -36,7 +36,7 @@ export function listSessionFiles(sessionsDir: string): SessionFile[] {
   const files: SessionFile[] = [];
 
   const collect = (dir: string) => {
-    let names: ReturnType<typeof readdirSync>;
+    let names: Dirent[];
     try {
       names = readdirSync(dir, { withFileTypes: true });
     } catch {
