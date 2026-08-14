@@ -42,6 +42,7 @@ import {
 	resolveModelFromMessage,
 	resolveModelSelection,
 } from "./model-display.ts";
+import { resolveModelReference } from "./routes.ts";
 
 /**
  * Persona files this package ships as starting points. They are examples to
@@ -343,8 +344,13 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 	}
 
 	const selection = resolveModelSelection(taskModel, globalModel, agent.model);
+	// Route resolution is not a level in the precedence chain: it is applied once
+	// to whichever value won it, so a bare route key works wherever a
+	// provider/model string does. An unresolved key passes through unchanged and
+	// the child errors on it, exactly as it did before routes existed.
+	const dispatchModel = resolveModelReference(selection.model);
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (selection.model) args.push("--model", selection.model);
+	if (dispatchModel) args.push("--model", dispatchModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -358,7 +364,11 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		requestedModel: selection.model,
+		// The dispatched string, not the raw request: the usage line re-attaches a
+		// `:thinkingLevel` suffix from this field, and a bare route key carries none.
+		// `modelSource` still names who picked the value, so [agent] and
+		// [frontmatter] stay truthful.
+		requestedModel: dispatchModel,
 		modelSource: selection.source,
 		step,
 	};
