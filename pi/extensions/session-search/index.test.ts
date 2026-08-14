@@ -131,6 +131,28 @@ test("session_search finds a hit and session_read expands it", async () => {
   assert.doesNotMatch(transcript, /whole file body/);
 });
 
+test("scope narrows to the working directory, and an unhonourable scope says what it searched instead", async () => {
+  const { tools, ctx } = harness();
+
+  // The fixture session ran in /work/repo; ctx.cwd is the temp root.
+  const here = await tools
+    .get("session_search")
+    .execute("c1", { query: "ripgrep", scope: "project" }, undefined, undefined, ctx);
+  assert.equal(here.details.count, 0);
+
+  const everywhere = await tools
+    .get("session_search")
+    .execute("c2", { query: "ripgrep", scope: "/work/**" }, undefined, undefined, ctx);
+  assert.equal(everywhere.details.count, 2);
+
+  // No session manager in the harness, so lineage cannot be honoured.
+  const lineage = await tools
+    .get("session_search")
+    .execute("c3", { query: "ripgrep", scope: "lineage" }, undefined, undefined, ctx);
+  assert.match(lineage.content[0].text as string, /whole index/);
+  assert.equal(lineage.details.count, 2);
+});
+
 test("a malformed query and an unknown session are thrown, not returned as results", async () => {
   const { tools, ctx } = harness();
   await assert.rejects(

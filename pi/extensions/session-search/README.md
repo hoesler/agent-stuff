@@ -76,7 +76,7 @@ At least one of `query`, `touched`, or `command` is required; the rest narrow.
 | `touched` | glob over a file path from tool evidence, e.g. `**/auth.ts` |
 | `action` | narrows `touched` to `write`, `read`, or `any` |
 | `command` | substring of a shell command that was run |
-| `cwd` | glob over the session's working directory |
+| `scope` | where to look; see below |
 | `after`, `before` | ISO date, or relative shorthand such as `14d` |
 | `role` | `user`, `assistant`, or `any` |
 | `limit` | default 10 |
@@ -95,6 +95,41 @@ Worked examples:
 - what was said — `{ "query": "\"session index\" AND sqlite" }`
 - what was changed — `{ "touched": "**/auth.ts", "action": "write" }`
 - what was run — `{ "command": "migrate", "after": "14d" }`
+- where — `{ "query": "retry budget", "scope": "repo" }`
+
+### Scopes
+
+`scope` answers *where to look*, and defaults to everywhere. Searching every
+project is the default because the question the extension exists for — *where
+was that conversation* — is usually asked precisely when the project is what
+you have forgotten.
+
+| Scope | Means |
+| --- | --- |
+| `all` | every indexed session (the default) |
+| `project` | the current working directory and everything below it |
+| `repo` | that, across every worktree of the current repository |
+| `lineage` | the running session's fork family, ancestors and descendants |
+| anything else | a path glob over the working directory, e.g. `~/Develop/**` |
+
+The four keywords are matched exactly, so any string with path or glob syntax
+in it is unambiguously a glob. A directory named literally `repo` therefore
+needs `**/repo` — which is what a working glob for it looks like anyway, since
+a bare pattern is already prefix-matched.
+
+`repo` resolves worktrees with `git worktree list` at query time, which is why
+the index needs no git column and `--rebuild` stays lossless. The cost is that
+a worktree git no longer knows about — one you deleted after merging — is no
+longer connected to its repository. Its sessions stay indexed and `all` still
+finds them, but `repo` sees them only if the worktree lived *inside* the
+repository, as `<repo>/.worktrees/<name>` does: the repository root already
+matches everything below it, deleted or not. Worktrees parked outside the
+repository drop out of `repo` scope when they are removed.
+
+A scope that cannot be honoured widens rather than narrows, and says so on the
+result: `repo` outside a repository searches `project`, and `lineage` with no
+running session searches everything. A scope that silently returned less would
+read as an answer.
 
 ### `session_read`
 

@@ -24,7 +24,8 @@ import { SessionSearchConfigLoader, resolveConfigPaths } from "./config.ts";
 import { getMeta, openIndex, resetIndex } from "./db.ts";
 import { type RefreshStats, refreshIndex } from "./ingest.ts";
 import { renderResults, renderTranscript } from "./render.ts";
-import { type SearchParams, readEntries, resolveSession, searchIndex } from "./search.ts";
+import { type SearchParams, loadFileNodes, readEntries, resolveSession, searchIndex } from "./search.ts";
+import { gitWorktrees, resolveScope } from "./scope.ts";
 import type { ConfigSnapshot, SessionSearchConfig } from "./types.ts";
 
 /** Cap on one `session_read`, in characters. */
@@ -195,6 +196,12 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
       "  so search for the command, not for what it printed.",
       "",
       "At least one of `query`, `touched`, or `command` is required; the rest narrow.",
+      "",
+      "`scope` says WHERE to look, and defaults to every project. Use `project` for",
+      '"here", `repo` for "this repository including its other worktrees", `lineage`',
+      "for \"earlier in this conversation's fork family\", or pass a path glob such as",
+      "`~/Develop/**` for anywhere else. A scope that cannot be honoured widens and",
+      "says so in the result rather than quietly returning less.",
       "Each result gives a session id to open with `pi --resume`, an entry id, whether",
       "the hit sits on the session's main line or an abandoned side branch, and a",
       "snippet. Use session_read to expand one without leaving this session.",
@@ -212,8 +219,11 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
       command: Type.Optional(
         Type.String({ description: "Substring of a shell command that was run" }),
       ),
-      cwd: Type.Optional(
-        Type.String({ description: "Glob over the session's working directory" }),
+      scope: Type.Optional(
+        Type.String({
+          description:
+            '"all" (default), "project", "repo", "lineage", or a glob over the session\'s working directory',
+        }),
       ),
       after: Type.Optional(
         Type.String({ description: "ISO date, or relative shorthand such as 14d" }),
@@ -229,9 +239,18 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
     // isError, which is what lets the model correct its own syntax.
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return withIndex(ctx, (index, config) => {
-        const results = searchIndex(index, params as SearchParams, {
-          maxSnippetChars: config.maxSnippetChars,
+        const requested = params as SearchParams & { scope?: string };
+        const scope = resolveScope(requested.scope, {
+          cwd: ctx.cwd,
+          sessionFile: ctx.sessionManager?.getSessionFile() ?? undefined,
+          files: () => loadFileNodes(index),
+          worktrees: gitWorktrees,
         });
+        const results = searchIndex(
+          index,
+          { ...requested, scope: scope.filter },
+          { maxSnippetChars: config.maxSnippetChars },
+        );
         const body = renderResults(results, {
           now: new Date(),
           home: homedir(),
@@ -240,7 +259,11 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
               ? { files: lastStats.remainingFiles, bytes: lastStats.remainingBytes }
               : undefined,
         });
-        const notes = [...configNotes(), ...(staleNote ? [staleNote] : [])];
+        const notes = [
+          ...configNotes(),
+          ...(staleNote ? [staleNote] : []),
+          ...(scope.note ? [scope.note] : []),
+        ];
         return textResult([...notes, body].join("\n"), {
           count: results.length,
           backlogFiles: lastStats?.remainingFiles ?? 0,

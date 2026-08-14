@@ -132,15 +132,76 @@ test("touched and action select on evidence, and command searches shell commands
   assert.equal(searchIndex(db, { command: "1000 rows", limit: 10 }, OPTIONS).length, 0);
 });
 
-test("cwd, role, and date filters narrow the result set", () => {
+/** Shares a path prefix with `/work/repo` without being inside it. */
+const SIBLING: FixtureSession = {
+  path: "--work-repo-old--/e.jsonl",
+  id: "eee",
+  cwd: "/work/repo-old",
+  created: "2026-07-10T09:00:00.000Z",
+  entries: [
+    { id: "s1", parentId: null, role: "user", text: "ripgrep in the old checkout", timestamp: "2026-07-10T10:00:00.000Z" },
+  ],
+};
+
+/** A session started below the repository root, in a subdirectory. */
+const NESTED: FixtureSession = {
+  path: "--work-repo-packages-api--/f.jsonl",
+  id: "fff",
+  cwd: "/work/repo/packages/api",
+  created: "2026-07-11T09:00:00.000Z",
+  entries: [
+    { id: "p1", parentId: null, role: "user", text: "ripgrep in the api package", timestamp: "2026-07-11T10:00:00.000Z" },
+  ],
+};
+
+test("scope, role, and date filters narrow the result set", () => {
   const db = indexed([PARENT, OTHER]);
   // Three hits: two user messages and the session name, which is prose too.
   assert.equal(searchIndex(db, { query: "ripgrep", limit: 10 }, OPTIONS).length, 3);
-  assert.equal(searchIndex(db, { query: "ripgrep", cwd: "/work/**", limit: 10 }, OPTIONS).length, 1);
+  assert.equal(
+    searchIndex(db, { query: "ripgrep", scope: { kind: "glob", pattern: "/work/**" }, limit: 10 }, OPTIONS).length,
+    1,
+  );
   assert.equal(searchIndex(db, { query: "ripgrep", role: "user", limit: 10 }, OPTIONS).length, 2);
   assert.equal(searchIndex(db, { query: "snippets", role: "user", limit: 10 }, OPTIONS).length, 0);
   assert.equal(searchIndex(db, { query: "ripgrep", after: "2026-07-20", limit: 10 }, OPTIONS).length, 2);
   assert.equal(searchIndex(db, { query: "ripgrep", before: "2026-07-20", limit: 10 }, OPTIONS).length, 1);
+});
+
+test("a roots scope takes the directory and everything below it, but not a sibling sharing its prefix", () => {
+  const db = indexed([PARENT, NESTED, SIBLING, OTHER]);
+  const scoped = searchIndex(db, { query: "ripgrep", scope: { kind: "roots", roots: ["/work/repo"] }, limit: 10 }, OPTIONS);
+  assert.deepEqual(
+    scoped.map((result) => result.sessionId).sort(),
+    ["aaa", "fff"],
+  );
+});
+
+test("a roots scope spans several worktrees at once", () => {
+  const db = indexed([PARENT, SIBLING, OTHER]);
+  const scoped = searchIndex(
+    db,
+    { query: "ripgrep", scope: { kind: "roots", roots: ["/work/repo", "/work/repo-old"] }, limit: 10 },
+    OPTIONS,
+  );
+  assert.deepEqual(
+    scoped.map((result) => result.sessionId).sort(),
+    ["aaa", "eee"],
+  );
+});
+
+test("a paths scope selects exactly the named session files", () => {
+  const db = indexed([PARENT, OTHER]);
+  const parentPath = resolveSession(db, "aaa")!;
+  const scoped = searchIndex(db, { query: "ripgrep", scope: { kind: "paths", paths: [parentPath] }, limit: 10 }, OPTIONS);
+  assert.deepEqual(
+    scoped.map((result) => result.sessionId),
+    ["aaa"],
+  );
+  assert.equal(
+    searchIndex(db, { query: "ripgrep", scope: { kind: "paths", paths: [] }, limit: 10 }, OPTIONS).length,
+    0,
+  );
 });
 
 test("a fork sharing entry ids produces one result, attributed to the origin", () => {
