@@ -45,6 +45,8 @@ test("documented example is a valid configuration", async () => {
   const parsed = parseModeConfig(raw);
   assert.deepEqual(parsed.modes.map((mode) => mode.id), ["low", "medium", "high", "ultra"]);
   assert.equal(parsed.modes[3]?.thinkingLevel, "max");
+  assert.equal(typeof parsed.defaultRoutes?.oracle, "object");
+  assert.deepEqual(parsed.modes[0]?.routes, { oracle: false });
 });
 
 test("parser normalizes optional presentation fields", () => {

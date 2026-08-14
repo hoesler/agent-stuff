@@ -2,6 +2,14 @@
   "version": 1,
   "defaultMode": "medium",
   "cycleShortcut": "f8",
+  "defaultRoutes": {
+    "oracle": {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "thinkingLevel": "high",
+      "description": "A second-opinion model, deliberately different from the one you are running on"
+    }
+  },
   "modes": [
     {
       "id": "low",
@@ -9,7 +17,10 @@
       "provider": "zai",
       "model": "glm-5.2",
       "thinkingLevel": "low",
-      "description": "Fast, low-cost mode for small, well-defined tasks"
+      "description": "Fast, low-cost mode for small, well-defined tasks",
+      "routes": {
+        "oracle": false
+      }
     },
     {
       "id": "medium",
