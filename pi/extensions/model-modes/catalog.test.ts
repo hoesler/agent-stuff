@@ -42,3 +42,24 @@ test("omits the trailing dash-description segment when a mode has no description
   assert.equal(line, "- `bare` → `test/m:medium`");
   assert.doesNotMatch(line, /—\s*$/);
 });
+
+test("omits the routes section when no routes resolve", () => {
+  assert.doesNotMatch(formatModeCatalog(base), /Routes/);
+  assert.doesNotMatch(formatModeCatalog(base, []), /Routes/);
+});
+
+test("lists a resolved route by key, with its description and no model string", () => {
+  const catalog = formatModeCatalog(base, [
+    { key: "oracle", model: "anthropic/claude-fable-5:high", description: "a second-opinion model" },
+  ]);
+  assert.match(catalog, /Routes \(resolved for the active mode; pass the key, not a model string\):/);
+  assert.equal(catalog.split("\n").at(-1), "- `oracle` — a second-opinion model");
+  assert.doesNotMatch(catalog, /claude-fable-5/);
+});
+
+test("omits the trailing dash-description segment for a route with no description", () => {
+  const catalog = formatModeCatalog(base, [{ key: "oracle", model: "anthropic/claude-fable-5:high" }]);
+  const line = catalog.split("\n").at(-1)!;
+  assert.equal(line, "- `oracle`");
+  assert.doesNotMatch(line, /—\s*$/);
+});

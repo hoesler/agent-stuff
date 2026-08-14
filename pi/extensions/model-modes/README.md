@@ -131,6 +131,92 @@ This field is optional and defaults to `false` — existing configurations are
 unaffected unless you opt in. When unset, invalid, or missing, no catalog is
 added and no error text appears in the prompt.
 
+## Routes
+
+A route is a named key that resolves to a model, per mode. It answers "when I am
+in this mode, which model is my *second opinion*?" — a question a mode catalog
+cannot answer, because the target is not the mode you are running.
+
+Both fields are optional. With neither present, behavior is exactly as before:
+nothing is published and nothing is rendered.
+
+```json
+{
+  "version": 1,
+  "defaultMode": "medium",
+  "defaultRoutes": {
+    "oracle": {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "thinkingLevel": "high",
+      "description": "A second-opinion model, deliberately different from the one you are running on"
+    }
+  },
+  "modes": [
+    { "id": "low", "provider": "zai", "model": "glm-5.2", "thinkingLevel": "low",
+      "routes": { "oracle": false } },
+    { "id": "high", "provider": "openai", "model": "gpt-5.6-sol", "thinkingLevel": "high",
+      "routes": { "oracle": { "provider": "google", "model": "gemini-4", "thinkingLevel": "max" } } }
+  ]
+}
+```
+
+- `defaultRoutes` — route key to target, applying to every mode that does not say otherwise.
+- `modes[].routes` — route key to target, or `false` to opt this mode out of a default.
+- A target is the same shape as a mode target: `provider`, `model`, optional
+  `thinkingLevel` (default `off`, rendered without a `:off` suffix), and an
+  optional `description` used only by the catalog block below.
+- Route keys must be non-empty and must not contain `/`. That is what lets a
+  consumer tell a key from a `provider/model` reference.
+
+Resolution for a key, against the active mode:
+
+1. the active mode sets it to `false` → no route;
+2. the active mode gives a target → that target;
+3. `defaultRoutes` has the key → that target;
+4. otherwise → no route.
+
+`mode:custom` and `mode:error` have no mode entry, so they land on step 3. That
+is the point of `defaultRoutes`: a session pinned with `--model` still has a
+second opinion.
+
+A target that equals the live provider/model/thinkingLevel triple exactly
+resolves to nothing. A second opinion from the model you are already running is
+not a second opinion.
+
+Routes are recomputed whenever the active mode can have changed — mode
+activation, session start, model or thinking-level selection, and config reload —
+so a mid-session `/mode` switch takes effect on the next dispatch with nothing to
+invalidate.
+
+### Consuming routes
+
+Resolved routes are published through a dependency-free contract, the same shape
+as the status hook above: a shared `Set` of resolver functions on
+`globalThis.__piModelRouteResolvers`. A resolver takes a route key and returns a
+`provider/model[:thinkingLevel]` string, or `undefined` to decline. Consumers
+call every registered function at the moment they need a model, ignore thrown
+errors, and take the first non-empty answer. Resolution is pull, not push, so
+load order does not matter and a mode change needs no invalidation.
+
+The `subagent` extension is the intended consumer: its personas' `model:`
+frontmatter accepts a bare route key, resolved at dispatch time. See
+`routes-hook.ts` for the full documented contract.
+
+When `exposeCatalogInSystemPrompt` is on, resolved keys are also listed in the
+catalog block, **by key only** — never as a resolved model string:
+
+```text
+Routes (resolved for the active mode; pass the key, not a model string):
+
+- `oracle` — A second-opinion model, deliberately different from the one you are running on
+```
+
+A key suppressed by `false` or by the redundancy rule simply does not appear. The
+prompt is built once per turn while the mode can change at any moment, so a
+literal model string here would hand the agent a stale route; the key is stable
+and resolved late.
+
 ## Doctor statuses
 
 - `OK` — configuration is valid and every mode's model is currently available.

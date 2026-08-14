@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { describe } from "node:test";
 import {
   ModeConfigLoader,
   parseModeConfig,
@@ -45,6 +45,8 @@ test("documented example is a valid configuration", async () => {
   const parsed = parseModeConfig(raw);
   assert.deepEqual(parsed.modes.map((mode) => mode.id), ["low", "medium", "high", "ultra"]);
   assert.equal(parsed.modes[3]?.thinkingLevel, "max");
+  assert.equal(typeof parsed.defaultRoutes?.oracle, "object");
+  assert.deepEqual(parsed.modes[0]?.routes, { oracle: false });
 });
 
 test("parser normalizes optional presentation fields", () => {
@@ -138,4 +140,78 @@ test("loader reports missing files and invalid JSON at root", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+describe("routes", () => {
+  const withRoutes = (extra: Record<string, unknown>, modeExtra: Record<string, unknown> = {}) => ({
+    version: 1,
+    defaultMode: "medium",
+    modes: [{ id: "medium", provider: "openai", model: "gpt-5.6-sol", thinkingLevel: "medium", ...modeExtra }],
+    ...extra,
+  });
+
+  test("parses defaultRoutes targets, defaulting thinkingLevel to off", () => {
+    const config = parseModeConfig(withRoutes({ defaultRoutes: { oracle: { provider: "anthropic", model: "claude-fable-5" } } }));
+    assert.deepEqual(config.defaultRoutes, {
+      oracle: { provider: "anthropic", model: "claude-fable-5", thinkingLevel: "off" },
+    });
+  });
+
+  test("parses a route description and thinkingLevel", () => {
+    const config = parseModeConfig(
+      withRoutes({ defaultRoutes: { oracle: { provider: "anthropic", model: "claude-fable-5", thinkingLevel: "high", description: "second opinion" } } }),
+    );
+    assert.deepEqual(config.defaultRoutes!.oracle, {
+      provider: "anthropic",
+      model: "claude-fable-5",
+      thinkingLevel: "high",
+      description: "second opinion",
+    });
+  });
+
+  test("parses per-mode routes, including false", () => {
+    const config = parseModeConfig(withRoutes({}, { routes: { oracle: false } }));
+    assert.deepEqual(config.modes[0].routes, { oracle: false });
+  });
+
+  test("rejects a route key containing a slash", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { "a/b": { provider: "p", model: "m" } } })),
+      /root\.defaultRoutes: route key must not contain "\/"/,
+    );
+  });
+
+  test("rejects an empty route key", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { "  ": { provider: "p", model: "m" } } })),
+      /root\.defaultRoutes: route key must be a non-empty string/,
+    );
+  });
+
+  test("rejects true as a route entry", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { oracle: true } })),
+      /root\.defaultRoutes\.oracle: expected a route target object or false/,
+    );
+  });
+
+  test("rejects an unknown property inside a route target", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { oracle: { provider: "p", model: "m", label: "x" } } })),
+      /root\.defaultRoutes\.oracle\.label: unknown property/,
+    );
+  });
+
+  test("rejects an unsupported thinkingLevel in a route target", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { oracle: { provider: "p", model: "m", thinkingLevel: "turbo" } } })),
+      /root\.defaultRoutes\.oracle\.thinkingLevel: unsupported value "turbo"/,
+    );
+  });
+
+  test("omits both fields when absent", () => {
+    const config = parseModeConfig(withRoutes({}));
+    assert.equal("defaultRoutes" in config, false);
+    assert.equal("routes" in config.modes[0], false);
+  });
 });

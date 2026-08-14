@@ -11,6 +11,8 @@ import { formatModeCatalog } from "./catalog.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
 import { type ActualSelection, cycleOrder, hasExplicitModelSelection, inferActiveMode, isFreshSession } from "./mode-state.ts";
+import { type ResolvedRoute, resolveRoutes } from "./routes.ts";
+import { registerModelRouteResolver } from "./routes-hook.ts";
 import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
@@ -22,6 +24,10 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const initial = await loader.refresh(true);
   const registeredShortcut = initial.ok ? initial.config.cycleShortcut : undefined;
   let active: ActiveMode = { kind: "error" };
+  // Recomputed on every path that can change the active mode (see updateStatus).
+  // Routes are read at dispatch time, so keeping this current is the whole of
+  // making a mid-session /mode change take effect.
+  let currentRoutes: ResolvedRoute[] = [];
   let applying = false;
   // Serialize cycle/activate calls so overlapping invocations (e.g. rapid
   // shortcut presses, which the TUI dispatches fire-and-forget without
@@ -50,6 +56,16 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     if (active.kind === "custom") return "mode:custom";
     return undefined;
   });
+
+  // Same re-registration guard, for the same reason: activation can happen
+  // repeatedly (reload, resume, fork, new window) while the global Set outlives
+  // it, so a stale resolver closed over a dead `currentRoutes` would keep
+  // answering alongside ours.
+  const routeHookRegistry = globalThis as typeof globalThis & { __modelModesRouteResolverUnregister?: () => void };
+  routeHookRegistry.__modelModesRouteResolverUnregister?.();
+  routeHookRegistry.__modelModesRouteResolverUnregister = registerModelRouteResolver(
+    (key) => currentRoutes.find((route) => route.key === key)?.model,
+  );
 
   const asModeModel = (model: Model<Api>): ModeModel => ({
     provider: model.provider,
@@ -90,6 +106,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     };
     if (!snapshot.ok) active = { kind: "error" };
     else active = inferActiveMode(snapshot.config, effective);
+    currentRoutes = snapshot.ok ? resolveRoutes(snapshot.config, active, effective) : [];
     const label = active.kind === "named" ? active.mode.id : active.kind;
     const detail = active.kind !== "error" && effective.model ? ` (${effective.model} · thinking:${effective.thinkingLevel})` : "";
     ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
@@ -318,6 +335,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   pi.on("before_agent_start", async (event, ctx) => {
     const snapshot = await refresh(ctx);
     if (!snapshot.ok || !snapshot.config.exposeCatalogInSystemPrompt) return undefined;
-    return { systemPrompt: `${event.systemPrompt}\n\n${formatModeCatalog(snapshot.config)}` };
+    // `refresh` ran updateStatus, so currentRoutes reflects this turn's mode.
+    return { systemPrompt: `${event.systemPrompt}\n\n${formatModeCatalog(snapshot.config, currentRoutes)}` };
   });
 }

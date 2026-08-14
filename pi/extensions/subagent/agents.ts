@@ -20,6 +20,12 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	systemPrompt: string;
+	/**
+	 * The persona's `## When to use` section, lifted out of `systemPrompt` for the
+	 * *calling* agent's prompt. Only present for a `promote: true` persona that
+	 * actually has such a section.
+	 */
+	promotedPrompt?: string;
 	source: AgentSource;
 	filePath: string;
 }
@@ -41,6 +47,32 @@ export interface DiscoverAgentsOptions {
 	 * its prompt bodies and its descriptions end up in the model's context.
 	 */
 	includeProject: boolean;
+}
+
+/** `## When to use`, exactly at heading level 2. */
+const WHEN_TO_USE = /^##[ \t]+when to use[ \t]*$/i;
+/** The next level-2 heading, which ends the section. `###` and deeper stay inside it. */
+const SECTION_END = /^##(?!#)/;
+
+/**
+ * Split a persona body into the guidance meant for the caller and the prompt
+ * meant for the child. A `promote: true` persona with no `## When to use`
+ * section promotes nothing and still works, so the body comes back untouched.
+ */
+export function splitPromotedSection(body: string): { systemPrompt: string; promotedPrompt?: string } {
+	const lines = body.split("\n");
+	const start = lines.findIndex((line) => WHEN_TO_USE.test(line));
+	if (start === -1) return { systemPrompt: body };
+
+	const offset = lines.slice(start + 1).findIndex((line) => SECTION_END.test(line));
+	const end = offset === -1 ? lines.length : start + 1 + offset;
+
+	const promoted = lines.slice(start + 1, end).join("\n").trim();
+	const remainder = [...lines.slice(0, start), ...lines.slice(end)].join("\n").trim();
+	return {
+		systemPrompt: remainder,
+		...(promoted ? { promotedPrompt: promoted } : {}),
+	};
 }
 
 function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
@@ -80,12 +112,21 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			.map((t: string) => t.trim())
 			.filter(Boolean);
 
+		// YAML yields a real boolean, but a quoted "true" is a natural thing to
+		// write and should not silently do nothing.
+		const promoteRaw = frontmatter.promote as unknown;
+		const promote = promoteRaw === true || String(promoteRaw).trim() === "true";
+		const { systemPrompt, promotedPrompt } = promote
+			? splitPromotedSection(body)
+			: { systemPrompt: body, promotedPrompt: undefined };
+
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model,
-			systemPrompt: body,
+			systemPrompt,
+			...(promotedPrompt ? { promotedPrompt } : {}),
 			source,
 			filePath,
 		});

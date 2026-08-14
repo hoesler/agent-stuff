@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, test } from "node:test";
-import { type AgentConfig, discoverAgents, findNearestProjectAgentsDir, suggestAgentName } from "./agents.ts";
+import {
+	type AgentConfig,
+	discoverAgents,
+	findNearestProjectAgentsDir,
+	splitPromotedSection,
+	suggestAgentName,
+} from "./agents.ts";
 
 const roots: string[] = [];
 
@@ -168,5 +174,67 @@ describe("suggestAgentName", () => {
 
 	test("returns nothing when there are no agents", () => {
 		assert.equal(suggestAgentName("reviewer", []), undefined);
+	});
+});
+
+describe("promotion", () => {
+	test("splits the When to use section out of the child prompt", () => {
+		const { systemPrompt, promotedPrompt } = splitPromotedSection(
+			"## When to use\n\nConsult it for hard bugs.\n\n### Not for\n\nGreps.\n\n## Advisor prompt\n\nYou are an advisor.",
+		);
+		assert.equal(promotedPrompt, "Consult it for hard bugs.\n\n### Not for\n\nGreps.");
+		assert.equal(systemPrompt, "## Advisor prompt\n\nYou are an advisor.");
+	});
+
+	test("takes the section to end of file when nothing follows it", () => {
+		const { systemPrompt, promotedPrompt } = splitPromotedSection("Intro.\n\n## When to use\n\nAlways.");
+		assert.equal(promotedPrompt, "Always.");
+		assert.equal(systemPrompt, "Intro.");
+	});
+
+	test("promotes nothing and leaves the body intact when there is no such section", () => {
+		const { systemPrompt, promotedPrompt } = splitPromotedSection("You are an advisor.\n\n## Output\n\nBe brief.");
+		assert.equal(promotedPrompt, undefined);
+		assert.equal(systemPrompt, "You are an advisor.\n\n## Output\n\nBe brief.");
+	});
+
+	test("matches the heading case-insensitively and ignores deeper headings", () => {
+		assert.equal(splitPromotedSection("### When to use\n\nNo.").promotedPrompt, undefined);
+		assert.equal(splitPromotedSection("## WHEN TO USE\n\nYes.").promotedPrompt, "Yes.");
+	});
+
+	test("reads promotedPrompt from a persona with promote: true", () => {
+		const s = setup();
+		writeAgent(
+			s.userDir,
+			"advisor.md",
+			"name: advisor\ndescription: Advice\nmodel: oracle\npromote: true",
+			"## When to use\n\nFor hard bugs.\n\n## Advisor prompt\n\nYou advise.",
+		);
+
+		const { agents } = discoverAgents({ ...s, includeProject: false });
+
+		assert.equal(agents[0].promotedPrompt, "For hard bugs.");
+		assert.equal(agents[0].systemPrompt, "## Advisor prompt\n\nYou advise.");
+		assert.equal(agents[0].model, "oracle");
+	});
+
+	test("leaves the body alone when promote is absent", () => {
+		const s = setup();
+		writeAgent(s.userDir, "advisor.md", "name: advisor\ndescription: Advice", "## When to use\n\nFor hard bugs.");
+
+		const { agents } = discoverAgents({ ...s, includeProject: false });
+
+		assert.equal(agents[0].promotedPrompt, undefined);
+		assert.match(agents[0].systemPrompt, /## When to use/);
+	});
+
+	test("accepts promote given as a string", () => {
+		const s = setup();
+		writeAgent(s.userDir, "advisor.md", 'name: advisor\ndescription: Advice\npromote: "true"', "## When to use\n\nX.");
+
+		const { agents } = discoverAgents({ ...s, includeProject: false });
+
+		assert.equal(agents[0].promotedPrompt, "X.");
 	});
 });
