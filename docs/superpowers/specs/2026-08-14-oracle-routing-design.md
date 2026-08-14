@@ -64,6 +64,8 @@ which is the same invocation the published pi `oracle` extension builds across
 - Keep both extensions free of the word "oracle".
 - Keep both extensions independently installable: every missing piece produces
   silence, never a dangling instruction.
+- Make opting out complete at every level it is offered — turning a route off for
+  a mode must also stop the agent being told to use it.
 - Add no new tool parameter and no second model-selection vocabulary.
 
 ## Non-goals
@@ -253,7 +255,7 @@ Frontmatter gains `promote: true`. When set, `agents.ts` splits the Markdown bod
 the `## When to use` section (from its heading to the next `##` or end of file)
 becomes `promotedPrompt`; the remainder stays the child's `systemPrompt`.
 
-A `before_agent_start` handler appends every discovered persona's
+A `before_agent_start` handler appends every **promotable** persona's
 `promotedPrompt` to the calling agent's system prompt:
 
 ```
@@ -265,11 +267,38 @@ A `before_agent_start` handler appends every discovered persona's
 
 - `promote: true` with no `## When to use` section promotes nothing. The persona
   still works.
-- No promoted personas means no handler output and no heading.
-- **Promotion depends only on persona discovery, which subagent fully controls.**
-  It therefore cannot inject an instruction for something that is not there —
-  which is why promotion is deliberately independent of whether any route
-  resolves.
+- No promotable personas means no handler output and no heading.
+
+**Promotable** means discovered, `promote: true`, and — when the persona's
+`model` is a bare route key — that key currently resolves:
+
+| Persona `model` | Route state | Promoted? |
+| --- | --- | --- |
+| bare key (`oracle`) | resolves | yes |
+| bare key (`oracle`) | `false`, absent, or suppressed as redundant | **no** |
+| literal (`anthropic/claude-fable-5:high`) | n/a | yes |
+| absent | n/a | yes |
+
+A persona that is not promoted stays in the `agent` enum and still runs when the
+caller names it explicitly. It merely stops being advertised in a mode where it
+cannot work.
+
+This gate is what makes per-mode opt-out complete. Without it, a mode carrying
+`"routes": { "oracle": false }` still promotes "consult the oracle for…" into the
+prompt; the agent obeys, the bare value passes through unresolved, and the child
+dies on an unknown model — the exact dangling instruction this design otherwise
+avoids, reached through the example configuration above rather than through a
+corner case.
+
+The gate costs nothing structurally. `before_agent_start` fires per turn, so
+promotion tracks the active mode with no new event, no catalog rebuild, and no
+need for subagent to observe mode changes. The `agent` enum stays static.
+
+Dispatch is deliberately **not** gated the same way. subagent cannot distinguish
+"bare key meant as a route" from "bare model name the caller typed", so an
+unresolved value still passes through unchanged (see Route resolution). Gating
+promotion is sufficient: the agent is never told to use what cannot run, and a
+caller who names it anyway keeps the escape hatch.
 - **Trust.** Promotion inherits the existing gate: project personas enter the
   catalog only when Pi has marked the project trusted, so an untrusted repo
   cannot promote text into the parent's prompt. Note that promotion is a stronger
@@ -357,7 +386,7 @@ exposes them under known names.
 | `model-modes` not installed | Nothing publishes. Bare model values pass through as today. Persona works with a literal `model:`. |
 | `subagent` not installed | `model-modes` publishes into the void. No behavior change. |
 | No `oracle.md` | Nothing promoted, nothing dispatched. The route resolves but nobody asks. |
-| Route key absent or `false` | Value passes through unchanged; child errors on an unknown model. |
+| Route key absent or `false` | Personas keyed on it are not promoted, so the agent is never told to use them. A caller naming one explicitly passes the bare value through unchanged, and the child errors on an unknown model. |
 | `exposeCatalogInSystemPrompt` off | Routes still resolve at dispatch. Only the agent-facing menu is absent. |
 
 Every direction produces silence or today's behavior. None produces an
@@ -392,7 +421,11 @@ unchanged; a throwing resolver is skipped; the first non-empty answer of several
 resolvers wins; no publisher registered is a no-op.
 
 **subagent `index.test.ts`** — promoted sections append under one heading; no
-promoted personas appends nothing.
+promotable personas appends nothing. The promotion gate: a persona whose `model`
+is a bare key is promoted when the key resolves and skipped when it is `false`,
+absent, or suppressed as redundant; a persona with a literal `model` or none is
+promoted either way; a skipped persona remains in the `agent` enum and still
+dispatches when named explicitly.
 
 ## Acceptance Criteria
 
@@ -405,8 +438,11 @@ promoted personas appends nothing.
   model without a reload.
 - A session started with `--model` reports `mode:custom` and still routes
   `oracle` via `defaultRoutes`.
-- A mode with `"routes": { "oracle": false }` does not route, and passes the bare
-  value through.
+- A mode with `"routes": { "oracle": false }` does not route, promotes no persona
+  keyed on `oracle`, and passes the bare value through if a caller names the
+  persona anyway.
+- Switching from a routed mode to one with `"routes": { "oracle": false }` removes
+  the promoted guidance from the next turn's system prompt without a reload.
 - When the resolved target equals the live provider/model/thinkingLevel, no route
   resolves.
 - With `subagent` installed and `model-modes` absent, an `oracle.md` carrying a
