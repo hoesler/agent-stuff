@@ -33,11 +33,19 @@ Agents are discovered from Markdown files with frontmatter, in two places:
 
 A name defined in both resolves to the project file, so a repo can shadow one of your own personas.
 
-Each agent file's frontmatter supports `name`, `description`, `tools` (comma-separated), and `model`. The Markdown body becomes the subagent's system prompt. Files missing `name` or `description` are skipped.
+Each agent file's frontmatter supports `name`, `description`, `tools` (comma-separated), `model`, and `promote`. The Markdown body becomes the subagent's system prompt. Files missing `name` or `description` are skipped.
+
+| Field         | Meaning                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `name`        | The value the caller passes as `agent`. Required.                                            |
+| `description` | One line shown in the catalog. Required.                                                      |
+| `tools`       | Comma-separated tool allowlist for the child. Omit to leave the child's defaults in place.     |
+| `model`       | A `provider/model[:thinkingLevel]` reference, or a bare route key (see below).                 |
+| `promote`     | `true` moves the body's `## When to use` section into the *calling* agent's prompt.            |
 
 ### Examples
 
-`examples/agents/` holds four personas to copy and edit — `general-purpose`, `planner`, `reviewer`, and `scout`:
+`examples/agents/` holds five personas to copy and edit — `general-purpose`, `oracle`, `planner`, `reviewer`, and `scout`:
 
 ```bash
 mkdir -p ~/.pi/agent/agents
@@ -79,6 +87,37 @@ The usage line for each result shows a short source label indicating which of th
 
 `[agent]` deliberately covers both override forms (per-task and whole-call): in both cases it's the orchestrating agent that made the explicit choice, not the persona's own configuration.
 
+### Route keys
+
+Wherever a model value is accepted — the `model` parameter, `subagent.model`, or a persona's `model:` frontmatter — it may be a **route key** instead of a `provider/model[:thinkingLevel]` reference. The discriminator is `/`: a model reference always contains one, a route key never does.
+
+Route resolution is not a fifth level in the precedence list above. It is one step applied to whichever value won, so a key works wherever a model string does.
+
+Keys are resolved at dispatch time through an optional, dependency-free contract: a shared `Set` of resolver functions on `globalThis.__piModelRouteResolvers`, published by [`model-modes`](../model-modes/README.md) from its per-mode `defaultRoutes` / `modes[].routes` table. The first non-empty answer wins; a resolver that throws is skipped.
+
+Resolving late is the point. A key like `oracle` can mean a different model in each mode, so the answer is read at the moment the child is spawned rather than baked into a system prompt that may predate the current `/mode`.
+
+With no publisher installed, or with a key nothing resolves, the bare value is passed to the child unchanged and the child errors on an unknown model — exactly the behavior before routes existed.
+
+### Promoted guidance
+
+`promote: true` splits the persona's `## When to use` section (from that heading to the next `##`) out of the child's system prompt and appends it to the **calling** agent's, so that the guidance lives in a file you edit rather than in this extension's source:
+
+```text
+## Subagent guidance (subagent extension)
+
+### oracle
+Consult the oracle for code review and architecture feedback, ...
+```
+
+- A `promote: true` persona with no `## When to use` section promotes nothing and still works normally.
+- With no promotable persona, nothing is appended — there is never a heading without a section under it.
+- Guidance is recomputed every turn, so it tracks the active mode with no reload.
+
+A persona whose `model` is a bare route key is promoted **only while that key resolves**. When a mode turns the route off, the persona is no longer advertised — otherwise the calling agent would be told to use something whose model cannot be resolved, and the child would die on it. The persona still stays in the `agent` enum and still runs when the caller names it explicitly; dispatch is not gated, because this extension cannot tell a route key from a model name the caller simply typed.
+
+Promotion inherits the project-trust gate: untrusted project personas are not discovered at all, so a repo cannot promote text into your prompt. Note that promoted text is a stronger surface than the catalog line beside it — imperative rather than descriptive — so restricting promotion to user personas is a reasonable future tightening if repo-authored guidance proves noisy.
+
 ## Resolved model display
 
 The displayed model is the one the child process actually used, not the raw value that was requested — so aliases or mode-like values (e.g. `ultra` from a model-modes catalog) never appear as though they were the real model name.
@@ -99,7 +138,9 @@ For chain and parallel modes, each expanded step/task line shows its own resolve
 
 ## Testing
 
-The logic that does not need a running pi is split into pure modules with colocated tests: discovery and name matching in `agents.ts`, the tool contract in `catalog.ts`, and model selection and display in `model-display.ts`.
+The logic that does not need a running pi is split into pure modules with colocated tests: discovery, name matching, and the promoted-section split in `agents.ts`, the tool contract in `catalog.ts`, model selection and display in `model-display.ts`, route resolution in `routes.ts`, and promoted guidance in `promotion.ts`.
+
+The `globalThis` route key is itself a clean test seam: `routes.test.ts` sets `__piModelRouteResolvers` directly, with no mocking machinery.
 
 `run.test.ts` covers termination — timeout, abort, and the partial result each returns. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated.
 

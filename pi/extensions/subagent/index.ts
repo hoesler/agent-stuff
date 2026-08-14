@@ -42,6 +42,7 @@ import {
 	resolveModelFromMessage,
 	resolveModelSelection,
 } from "./model-display.ts";
+import { formatPromotedGuidance } from "./promotion.ts";
 import { resolveModelReference } from "./routes.ts";
 
 /**
@@ -1210,5 +1211,19 @@ export default function (pi: ExtensionAPI) {
 		discovery = next;
 		fingerprint = nextFingerprint;
 		pi.registerTool(createSubagentTool(discovery));
+	});
+
+	/**
+	 * Per turn, not per session: a promoted persona's route can stop resolving
+	 * when the active mode changes, and the gate inside formatPromotedGuidance
+	 * must see the state at this turn's start. Promotion inherits the discovery
+	 * trust gate — an untrusted repo's personas are not in `discovery` at all —
+	 * and emits nothing when no persona is promotable, so there is never a heading
+	 * without a section under it.
+	 */
+	pi.on("before_agent_start", async (event) => {
+		const guidance = formatPromotedGuidance(discovery.agents);
+		if (!guidance) return undefined;
+		return { systemPrompt: `${event.systemPrompt}\n\n${guidance}` };
 	});
 }
