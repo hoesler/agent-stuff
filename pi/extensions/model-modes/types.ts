@@ -10,6 +10,21 @@ export const THINKING_LEVELS = [
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+/**
+ * A route's target. Deliberately the same shape as a mode target so a route and
+ * a mode read identically in the config file; `description` is used only by the
+ * system-prompt catalog.
+ */
+export interface RouteTarget {
+  provider: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+  description?: string;
+}
+
+/** A target, or `false` to opt a mode out of an inherited default route. */
+export type RouteEntry = RouteTarget | false;
+
 export interface ModeDefinition {
   id: string;
   label: string;
@@ -17,6 +32,7 @@ export interface ModeDefinition {
   model: string;
   thinkingLevel: ThinkingLevel;
   description?: string;
+  routes?: Record<string, RouteEntry>;
 }
 
 export interface ModeConfig {
@@ -24,6 +40,7 @@ export interface ModeConfig {
   defaultMode: string;
   cycleShortcut?: string;
   exposeCatalogInSystemPrompt?: boolean;
+  defaultRoutes?: Record<string, RouteEntry>;
   modes: ModeDefinition[];
 }
 

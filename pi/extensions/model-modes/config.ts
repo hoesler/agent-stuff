@@ -6,13 +6,16 @@ import {
   type ConfigSnapshot,
   type ModeConfig,
   type ModeDefinition,
+  type RouteEntry,
+  type RouteTarget,
   type ThinkingLevel,
 } from "./types.ts";
 
 const RESERVED_IDS = new Set(["next", "previous", "doctor", "help", "init"]);
 const SHORTCUT = /^(?:(?:ctrl|shift|alt)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-2])|escape|enter|tab|space|backspace|delete|home|end|pageUp|pageDown|up|down|left|right)$/i;
-const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "exposeCatalogInSystemPrompt", "modes"]);
-const MODE_KEYS = new Set(["id", "label", "provider", "model", "thinkingLevel", "description"]);
+const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "exposeCatalogInSystemPrompt", "defaultRoutes", "modes"]);
+const MODE_KEYS = new Set(["id", "label", "provider", "model", "thinkingLevel", "description", "routes"]);
+const ROUTE_KEYS = new Set(["provider", "model", "thinkingLevel", "description"]);
 
 export interface ConfigPathOptions {
   envPath: string | undefined;
@@ -53,6 +56,49 @@ function rejectUnknown(input: Record<string, unknown>, allowed: Set<string>, pat
   }
 }
 
+function parseRouteTarget(value: unknown, path: string): RouteTarget {
+  const input = record(value, path);
+  rejectUnknown(input, ROUTE_KEYS, path);
+  const thinking = input.thinkingLevel === undefined
+    ? "off"
+    : requiredString(input.thinkingLevel, `${path}.thinkingLevel`);
+  if (!(THINKING_LEVELS as readonly string[]).includes(thinking)) {
+    throw new Error(`${path}.thinkingLevel: unsupported value "${thinking}"`);
+  }
+  const target: RouteTarget = {
+    provider: requiredString(input.provider, `${path}.provider`),
+    model: requiredString(input.model, `${path}.model`),
+    thinkingLevel: thinking as ThinkingLevel,
+  };
+  if (input.description !== undefined) {
+    target.description = requiredString(input.description, `${path}.description`);
+  }
+  return target;
+}
+
+/**
+ * A route key is the token the agent passes as a model value, and `subagent`
+ * tells a key from a `provider/model` reference by the absence of a slash. The
+ * restriction is validated here rather than assumed downstream.
+ */
+function parseRoutes(value: unknown, path: string): Record<string, RouteEntry> {
+  const input = record(value, path);
+  const routes: Record<string, RouteEntry> = {};
+  for (const [key, entry] of Object.entries(input)) {
+    if (key.trim().length === 0) throw new Error(`${path}: route key must be a non-empty string`);
+    if (key.includes("/")) throw new Error(`${path}: route key must not contain "/" ("${key}")`);
+    if (entry === false) {
+      routes[key] = false;
+      continue;
+    }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`${path}.${key}: expected a route target object or false`);
+    }
+    routes[key] = parseRouteTarget(entry, `${path}.${key}`);
+  }
+  return routes;
+}
+
 function parseMode(value: unknown, index: number): ModeDefinition {
   const path = `root.modes[${index}]`;
   const input = record(value, path);
@@ -73,6 +119,9 @@ function parseMode(value: unknown, index: number): ModeDefinition {
   };
   if (input.description !== undefined) {
     mode.description = requiredString(input.description, `${path}.description`);
+  }
+  if (input.routes !== undefined) {
+    mode.routes = parseRoutes(input.routes, `${path}.routes`);
   }
   return mode;
 }
@@ -101,11 +150,15 @@ export function parseModeConfig(value: unknown): ModeConfig {
   const exposeCatalogInSystemPrompt = input.exposeCatalogInSystemPrompt === undefined
     ? undefined
     : requiredBoolean(input.exposeCatalogInSystemPrompt, "root.exposeCatalogInSystemPrompt");
+  const defaultRoutes = input.defaultRoutes === undefined
+    ? undefined
+    : parseRoutes(input.defaultRoutes, "root.defaultRoutes");
   return {
     version: 1,
     defaultMode,
     ...(cycleShortcut ? { cycleShortcut } : {}),
     ...(exposeCatalogInSystemPrompt !== undefined ? { exposeCatalogInSystemPrompt } : {}),
+    ...(defaultRoutes ? { defaultRoutes } : {}),
     modes,
   };
 }
