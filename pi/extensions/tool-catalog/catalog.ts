@@ -19,24 +19,35 @@ import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 export type CatalogTool = Pick<ToolInfo, "name" | "description" | "sourceInfo">;
 type SourceInfo = CatalogTool["sourceInfo"];
 
+/** What you pinned. Anything unpinned is `auto` — left to whoever manages it. */
+export type ToolOverride = "on" | "off";
+export type ToolIntent = "auto" | ToolOverride;
+
+/** The session as the catalog sees it: what is active, and what you pinned. */
+export interface CatalogView {
+	active: ReadonlySet<string>;
+	overrides: ReadonlyMap<string, ToolOverride>;
+}
+
 export interface CatalogRow {
 	name: string;
-	/** Name and extension, padded into two columns so the checkbox lines up. */
+	/** Activity mark, name, and extension, padded so the value column lines up. */
 	label: string;
-	/** Checkbox shown in the value column. */
-	value: string;
-	/** Summary, origin, and path — shown under the list while the row is selected. */
+	/** Your intent, shown in the value column and cycled from there. */
+	value: ToolIntent;
+	/** Summary, state, origin, and path — shown while the row is selected. */
 	description: string;
-	enabled: boolean;
+	/** Whether the tool is in this turn's schema, which intent alone cannot say. */
+	active: boolean;
 }
 
 export interface CatalogPaths {
 	home: string;
 }
 
-export const CHECKED = "[x]";
-export const UNCHECKED = "[ ]";
-export const TOGGLE_VALUES = [CHECKED, UNCHECKED];
+export const ACTIVE_MARK = "●";
+/** Cycling order in the settings list: the default first. */
+export const INTENT_VALUES: ToolIntent[] = ["auto", "on", "off"];
 
 /** A name past this is truncated: one MCP tool should not widen every row. */
 const NAME_COLUMN_MAX = 28;
@@ -54,6 +65,12 @@ function truncate(text: string, width: number): string {
 
 function columnWidth(values: string[], max: number): number {
 	return Math.min(max, Math.max(0, ...values.map((value) => value.length)));
+}
+
+/** The activity mark shares the label, since the list styles only two columns. */
+function rowLabel(active: boolean, name: string, nameWidth: number, extension: string, extensionWidth: number): string {
+	const mark = active ? `${ACTIVE_MARK} ` : "  ";
+	return `${mark}${name.padEnd(nameWidth)}  ${extension.padEnd(extensionWidth)}`;
 }
 
 function segments(path: string): string[] {
@@ -116,8 +133,19 @@ export function summarize(description: string): string {
 	return truncate(collapsed, SUMMARY_MAX);
 }
 
-export function formatHeader(total: number, enabled: number): string {
-	return `${total} tool${total === 1 ? "" : "s"} · ${enabled} enabled`;
+export function formatHeader(total: number, active: number): string {
+	return `${total} tool${total === 1 ? "" : "s"} · ${active} active`;
+}
+
+/**
+ * Intent and reality on one line. They can disagree: an extension is free to
+ * activate a tool you pinned off, and the catalog would rather show that than
+ * pretend a pin is a guarantee.
+ */
+export function formatState(intent: ToolIntent, active: boolean): string {
+	if (intent === "on") return "on — pinned active";
+	if (intent === "off") return "off — pinned off";
+	return active ? "auto — active" : "auto — not active";
 }
 
 export interface HeaderStyle {
@@ -140,7 +168,7 @@ export function layoutHeader(title: string, counts: string, width: number, style
 
 export function buildRows(
 	tools: CatalogTool[],
-	enabled: ReadonlySet<string>,
+	view: CatalogView,
 	paths: CatalogPaths = { home: os.homedir() },
 ): CatalogRow[] {
 	const sorted = [...tools].sort((a, b) => {
@@ -157,15 +185,16 @@ export function buildRows(
 	const extensionWidth = columnWidth(extensions, EXTENSION_COLUMN_MAX);
 
 	return sorted.map((tool, index) => {
-		const isEnabled = enabled.has(tool.name);
+		const active = view.active.has(tool.name);
+		const intent = view.overrides.get(tool.name) ?? "auto";
 		const summary = summarize(tool.description ?? "");
-		const origin = formatOrigin(tool.sourceInfo, paths);
+		const detail = [formatState(intent, active), formatOrigin(tool.sourceInfo, paths)];
 		return {
 			name: tool.name,
-			label: `${(names[index] ?? "").padEnd(nameWidth)}  ${(extensions[index] ?? "").padEnd(extensionWidth)}`,
-			value: isEnabled ? CHECKED : UNCHECKED,
-			description: summary ? `${summary}\n${origin}` : origin,
-			enabled: isEnabled,
+			label: rowLabel(active, names[index] ?? "", nameWidth, extensions[index] ?? "", extensionWidth),
+			value: intent,
+			description: (summary ? [summary, ...detail] : detail).join("\n"),
+			active,
 		};
 	});
 }

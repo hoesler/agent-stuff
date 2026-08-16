@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	ACTIVE_MARK,
 	buildRows,
 	type CatalogTool,
-	CHECKED,
 	extensionName,
 	formatHeader,
+	INTENT_VALUES,
 	layoutHeader,
 	packageName,
-	UNCHECKED,
+	type ToolOverride,
 } from "./catalog.ts";
+
+/** What the catalog sees of the session: what is active, and what you pinned. */
+function view(active: string[] = [], overrides: [string, ToolOverride][] = []) {
+	return { active: new Set(active), overrides: new Map(overrides) };
+}
 
 const PATHS = { home: "/Users/dev" };
 const REPO = "/Users/dev/Develop/agent-stuff";
@@ -69,10 +75,10 @@ function rowFor(rows: ReturnType<typeof buildRows>, name: string) {
 }
 
 test("the second column names the extension that defines the tool, not its package spec", () => {
-	const rows = buildRows([fromGitPackage("ls", "pi-tool-display"), local("subagent", "subagent")], new Set(), PATHS);
+	const rows = buildRows([fromGitPackage("ls", "pi-tool-display"), local("subagent", "subagent")], view(), PATHS);
 
-	assert.match(rowFor(rows, "ls").label, /^ls\s+pi-tool-display$/);
-	assert.match(rowFor(rows, "subagent").label, /^subagent\s+subagent\s*$/);
+	assert.match(rowFor(rows, "ls").label, /^\s+ls\s+pi-tool-display$/);
+	assert.match(rowFor(rows, "subagent").label, /^\s+subagent\s+subagent\s*$/);
 });
 
 test("a single-file extension is named by its filename", () => {
@@ -112,7 +118,7 @@ test("rows are ordered builtin first, then sdk, then by extension name", () => {
 			local("session_search", "session-search"),
 			builtin("read"),
 		],
-		new Set(),
+		view(),
 		PATHS,
 	);
 
@@ -123,7 +129,7 @@ test("rows are ordered builtin first, then sdk, then by extension name", () => {
 });
 
 test("tools from one extension are ordered by name", () => {
-	const rows = buildRows([builtin("write"), builtin("bash"), builtin("read")], new Set(), PATHS);
+	const rows = buildRows([builtin("write"), builtin("bash"), builtin("read")], view(), PATHS);
 
 	assert.deepEqual(
 		rows.map((row) => row.name),
@@ -132,53 +138,83 @@ test("tools from one extension are ordered by name", () => {
 });
 
 test("name and extension columns are padded to a common width so every row aligns", () => {
-	const rows = buildRows([builtin("bash"), local("subagent", "subagent")], new Set(), PATHS);
+	const rows = buildRows([builtin("bash"), local("subagent", "subagent")], view(), PATHS);
 
 	const widths = new Set(rows.map((row) => row.label.length));
 	assert.equal(widths.size, 1, "labels must share one width");
-	assert.equal(rowFor(rows, "bash").label, "bash      builtin ");
-	assert.equal(rowFor(rows, "subagent").label, "subagent  subagent");
+	assert.equal(rowFor(rows, "bash").label, "  bash      builtin ");
+	assert.equal(rowFor(rows, "subagent").label, "  subagent  subagent");
 });
 
 test("an over-long tool name is truncated so one MCP tool cannot skew every row", () => {
 	const long = "mcp__claude_ai_Clinical_Trials__complete_authentication";
-	const rows = buildRows([builtin(long), builtin("read")], new Set(), PATHS);
+	const rows = buildRows([builtin(long), builtin("read")], view(), PATHS);
 
-	assert.match(rowFor(rows, long).label, /^mcp__claude_ai_Clinical_Tri…\s+builtin$/);
+	assert.match(rowFor(rows, long).label, /^\s+mcp__claude_ai_Clinical_Tri…\s+builtin$/);
 });
 
-test("a row carries its enabled state as a checkbox", () => {
-	const rows = buildRows([builtin("read"), builtin("write")], new Set(["read"]), PATHS);
+test("a dot marks the tools in this turn's schema", () => {
+	const rows = buildRows([builtin("read"), builtin("write")], view(["read"]), PATHS);
 
-	assert.equal(rowFor(rows, "read").value, CHECKED);
-	assert.equal(rowFor(rows, "read").enabled, true);
-	assert.equal(rowFor(rows, "write").value, UNCHECKED);
-	assert.equal(rowFor(rows, "write").enabled, false);
+	assert.equal(rowFor(rows, "read").active, true);
+	assert.ok(rowFor(rows, "read").label.startsWith(`${ACTIVE_MARK} `));
+	assert.equal(rowFor(rows, "write").active, false);
+	assert.ok(rowFor(rows, "write").label.startsWith("  "));
+});
+
+test("the value column shows your intent, which is not the same as being active", () => {
+	const rows = buildRows([builtin("read"), builtin("write"), builtin("bash")], view(["read", "bash"], [["read", "on"], ["write", "off"]]), PATHS);
+
+	assert.equal(rowFor(rows, "read").value, "on");
+	assert.equal(rowFor(rows, "write").value, "off");
+	assert.equal(rowFor(rows, "bash").value, "auto");
+});
+
+test("intent cycles auto, on, off", () => {
+	assert.deepEqual(INTENT_VALUES, ["auto", "on", "off"]);
+});
+
+test("an unpinned tool reports whether it is active and leaves the reason alone", () => {
+	const rows = buildRows([builtin("read", "Read a file."), builtin("write", "Write a file.")], view(["read"]), PATHS);
+
+	assert.equal(rowFor(rows, "read").description, "Read a file.\nauto — active\nbuiltin");
+	assert.equal(rowFor(rows, "write").description, "Write a file.\nauto — not active\nbuiltin");
+});
+
+test("a pinned tool says so, so a stale pin is visible next to the dot", () => {
+	const rows = buildRows(
+		[builtin("read", "Read a file."), builtin("write", "Write a file.")],
+		view(["read", "write"], [["read", "on"], ["write", "off"]]),
+		PATHS,
+	);
+
+	assert.equal(rowFor(rows, "read").description, "Read a file.\non — pinned active\nbuiltin");
+	assert.equal(rowFor(rows, "write").description, "Write a file.\noff — pinned off\nbuiltin");
 });
 
 test("a package tool spells out extension, package, and scope, then its path", () => {
-	const rows = buildRows([local("subagent", "subagent", "Launch a subagent.")], new Set(), PATHS);
+	const rows = buildRows([local("subagent", "subagent", "Launch a subagent.")], view(), PATHS);
 
 	assert.equal(
 		rowFor(rows, "subagent").description,
-		"Launch a subagent.\nsubagent · agent-stuff · project\n~/Develop/agent-stuff/pi/extensions/subagent/index.ts",
+		"Launch a subagent.\nauto — not active\nsubagent · agent-stuff · project\n~/Develop/agent-stuff/pi/extensions/subagent/index.ts",
 	);
 });
 
 test("the whole path is spelled out, so a nested extension's base folder is visible", () => {
-	const rows = buildRows([fromGitPackage("ls", "pi-tool-display", "List directory contents.")], new Set(), PATHS);
+	const rows = buildRows([fromGitPackage("ls", "pi-tool-display", "List directory contents.")], view(), PATHS);
 
 	assert.equal(
 		rowFor(rows, "ls").description,
-		"List directory contents.\npi-tool-display · amp-themes · user\n" +
+		"List directory contents.\nauto — not active\npi-tool-display · amp-themes · user\n" +
 			"~/.pi/agent/git/github.com/hoesler/amp-themes/node_modules/pi-tool-display/index.ts",
 	);
 });
 
 test("a builtin reports nothing beyond builtin — it has no package or path", () => {
-	const rows = buildRows([builtin("read", "Read a file.")], new Set(), PATHS);
+	const rows = buildRows([builtin("read", "Read a file.")], view(), PATHS);
 
-	assert.equal(rowFor(rows, "read").description, "Read a file.\nbuiltin");
+	assert.equal(rowFor(rows, "read").description, "Read a file.\nauto — not active\nbuiltin");
 });
 
 test("an extension outside any package still reports its scope and path", () => {
@@ -192,9 +228,9 @@ test("an extension outside any package still reports its scope and path", () => 
 			origin: "top-level",
 		},
 	};
-	const rows = buildRows([tool], new Set(), PATHS);
+	const rows = buildRows([tool], view(), PATHS);
 
-	assert.equal(rowFor(rows, "notes").description, "Take notes.\nscratchpad · user\n~/.pi/agent/extensions/scratchpad.ts");
+	assert.equal(rowFor(rows, "notes").description, "Take notes.\nauto — not active\nscratchpad · user\n~/.pi/agent/extensions/scratchpad.ts");
 });
 
 test("a path outside home keeps its absolute form", () => {
@@ -203,20 +239,20 @@ test("a path outside home keeps its absolute form", () => {
 		description: "Odd.",
 		sourceInfo: { path: "/opt/pi/odd.ts", source: "local", scope: "temporary", origin: "top-level" },
 	};
-	const rows = buildRows([tool], new Set(), PATHS);
+	const rows = buildRows([tool], view(), PATHS);
 
-	assert.equal(rowFor(rows, "odd").description, "Odd.\nodd · temporary\n/opt/pi/odd.ts");
+	assert.equal(rowFor(rows, "odd").description, "Odd.\nauto — not active\nodd · temporary\n/opt/pi/odd.ts");
 });
 
 test("only the first paragraph survives, with its whitespace collapsed", () => {
 	const description = "Runs a  command\nin the project.\n\nDo not use it for reading files.";
-	const rows = buildRows([builtin("bash", description)], new Set(), PATHS);
+	const rows = buildRows([builtin("bash", description)], view(), PATHS);
 
-	assert.equal(rowFor(rows, "bash").description, "Runs a command in the project.\nbuiltin");
+	assert.equal(rowFor(rows, "bash").description, "Runs a command in the project.\nauto — not active\nbuiltin");
 });
 
 test("a summary longer than the cap ends in an ellipsis", () => {
-	const rows = buildRows([builtin("verbose", "x".repeat(300))], new Set(), PATHS);
+	const rows = buildRows([builtin("verbose", "x".repeat(300))], view(), PATHS);
 
 	const summary = rowFor(rows, "verbose").description.split("\n")[0] ?? "";
 	assert.equal(summary.length, 240);
@@ -224,17 +260,17 @@ test("a summary longer than the cap ends in an ellipsis", () => {
 });
 
 test("a tool without a description shows only its origin", () => {
-	const rows = buildRows([builtin("read")], new Set(), PATHS);
+	const rows = buildRows([builtin("read")], view(), PATHS);
 
-	assert.equal(rowFor(rows, "read").description, "builtin");
+	assert.equal(rowFor(rows, "read").description, "auto — not active\nbuiltin");
 });
 
-test("the header counts tools and how many are enabled", () => {
-	assert.equal(formatHeader(43, 39), "43 tools · 39 enabled");
+test("the header counts tools and how many are active", () => {
+	assert.equal(formatHeader(43, 39), "43 tools · 39 active");
 });
 
 test("the header stays grammatical for a single tool", () => {
-	assert.equal(formatHeader(1, 0), "1 tool · 0 enabled");
+	assert.equal(formatHeader(1, 0), "1 tool · 0 active");
 });
 
 test("the header line right-aligns the counts against the title", () => {

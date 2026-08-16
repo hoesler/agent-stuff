@@ -1,17 +1,24 @@
 /**
- * Which tools are enabled, recovered from the session branch.
+ * What you asked for, kept apart from what is actually active.
  *
- * Selections are appended as custom entries rather than written to a config
- * file, so forking or walking the session tree carries the tool selection that
- * was live on that branch. Pure, so the branch-walk rules are testable without
- * a session.
+ * pi separates registered tools from active ones: an extension registers its
+ * tools once and switches them in and out of the model's schema as it goes.
+ * `setActiveTools` replaces the whole active list, so anything that writes a
+ * remembered list back over it deactivates whatever another extension turned on
+ * meanwhile. This module therefore stores only overrides — the tools you pinned
+ * on or off — and every write is computed from the live list.
+ *
+ * Overrides are appended as custom session entries rather than written to a
+ * config file, so forking or walking the session tree carries the intent that
+ * was live on that branch. Pure, so the rules are testable without a session.
  */
 
-/** Kept from the extension's earlier name so selections saved before survive. */
-export const TOOLS_CONFIG_ENTRY = "tools-config";
+import type { ToolOverride } from "./catalog.ts";
 
-export interface ToolsState {
-	enabledTools: string[];
+export const OVERRIDES_ENTRY = "tool-catalog-overrides";
+
+export interface OverridesState {
+	overrides: Record<string, ToolOverride>;
 }
 
 /** The slice of a session entry this module reads. */
@@ -21,31 +28,46 @@ export interface BranchEntry {
 	data?: unknown;
 }
 
-function savedSelection(entries: BranchEntry[]): string[] | undefined {
-	let selection: string[] | undefined;
+function isOverride(value: unknown): value is ToolOverride {
+	return value === "on" || value === "off";
+}
+
+export function restoreOverrides(entries: BranchEntry[]): Map<string, ToolOverride> {
+	let latest: Record<string, unknown> | undefined;
 	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== TOOLS_CONFIG_ENTRY) continue;
-		const data = entry.data as ToolsState | undefined;
+		if (entry.type !== "custom" || entry.customType !== OVERRIDES_ENTRY) continue;
+		const data = entry.data as OverridesState | undefined;
 		// A later malformed entry must not discard an earlier good one.
-		if (Array.isArray(data?.enabledTools)) selection = data.enabledTools;
+		if (data?.overrides && typeof data.overrides === "object") latest = data.overrides;
 	}
-	return selection;
+	const overrides = new Map<string, ToolOverride>();
+	for (const [name, intent] of Object.entries(latest ?? {})) {
+		if (isOverride(intent)) overrides.set(name, intent);
+	}
+	return overrides;
 }
 
-export interface RestoredTools {
-	enabled: Set<string>;
-	/** False when the session's own active set was adopted and must not be rewritten. */
-	restored: boolean;
-}
+/**
+ * The active list your overrides imply, or `undefined` when it already matches.
+ *
+ * Derived from the live list rather than assembled from scratch: everything not
+ * pinned stays exactly where the session left it, which is what makes `auto`
+ * mean "not my business". `undefined` keeps the caller from rewriting a list
+ * that needs no change.
+ */
+export function nextActiveTools(
+	live: string[],
+	overrides: ReadonlyMap<string, ToolOverride>,
+	registered: ReadonlySet<string>,
+): string[] | undefined {
+	const pinned = (intent: ToolOverride) =>
+		[...overrides].filter(([name, value]) => value === intent && registered.has(name)).map(([name]) => name);
 
-export function restoreEnabled(
-	entries: BranchEntry[],
-	allToolNames: string[],
-	activeTools: string[],
-): RestoredTools {
-	const selection = savedSelection(entries);
-	// No selection on this branch means the session's own active set is the truth.
-	if (!selection) return { enabled: new Set(activeTools), restored: false };
-	const known = new Set(allToolNames);
-	return { enabled: new Set(selection.filter((name) => known.has(name))), restored: true };
+	const off = new Set(pinned("off"));
+	const kept = live.filter((name) => !off.has(name));
+	const added = pinned("on").filter((name) => !kept.includes(name));
+	const next = [...kept, ...added];
+
+	const unchanged = next.length === live.length && next.every((name, index) => name === live[index]);
+	return unchanged ? undefined : next;
 }

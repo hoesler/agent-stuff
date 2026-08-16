@@ -2,24 +2,35 @@
  * Tool Catalog
  *
  * `/tools` shows every tool the session can see — its name, where it came from,
- * and what it does — and lets you toggle one off from the same list. Browsing is
- * the point; the checkbox is the afterthought.
+ * and what it does — and lets you pin one on or off from the same list.
+ * Browsing is the point; the pinning is the afterthought.
  *
- * Selections persist as session entries, so they follow forks and survive a
- * reload of the branch they were made on.
+ * pi separates registered tools from active ones, and extensions switch their
+ * own tools in and out of the schema as they go. So the catalog reads the live
+ * active list every time it renders or writes, and remembers only your
+ * overrides. Anything left on `auto` stays exactly where its extension put it.
  */
 
 import type { Component } from "@earendil-works/pi-tui";
 import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, Theme, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { buildRows, CHECKED, formatHeader, layoutHeader, TOGGLE_VALUES } from "./catalog.ts";
-import { restoreEnabled, TOOLS_CONFIG_ENTRY, type ToolsState } from "./state.ts";
+import {
+	ACTIVE_MARK,
+	buildRows,
+	formatHeader,
+	INTENT_VALUES,
+	layoutHeader,
+	type ToolIntent,
+	type ToolOverride,
+} from "./catalog.ts";
+import { nextActiveTools, type OverridesState, OVERRIDES_ENTRY, restoreOverrides } from "./state.ts";
 
 const TITLE = "Tool Catalog";
+const LEGEND = `${ACTIVE_MARK} = in this turn's tool schema`;
 const MAX_VISIBLE_ROWS = 15;
 
-/** Counts are read at render time so toggling a row updates them in place. */
+/** Counts are read at render time so a change updates them in place. */
 class CatalogHeader implements Component {
 	constructor(
 		private readonly theme: Theme,
@@ -32,6 +43,7 @@ class CatalogHeader implements Component {
 				title: (text) => this.theme.fg("accent", this.theme.bold(text)),
 				counts: (text) => this.theme.fg("muted", text),
 			}),
+			this.theme.fg("muted", LEGEND),
 			"",
 		];
 	}
@@ -40,32 +52,28 @@ class CatalogHeader implements Component {
 }
 
 export default function toolCatalogExtension(pi: ExtensionAPI) {
-	let enabledTools: Set<string> = new Set();
+	let overrides: Map<string, ToolOverride> = new Map();
 	let allTools: ToolInfo[] = [];
 
-	function persistState() {
-		pi.appendEntry<ToolsState>(TOOLS_CONFIG_ENTRY, { enabledTools: Array.from(enabledTools) });
+	function persistOverrides() {
+		pi.appendEntry<OverridesState>(OVERRIDES_ENTRY, { overrides: Object.fromEntries(overrides) });
 	}
 
-	function applyTools() {
-		pi.setActiveTools(Array.from(enabledTools));
+	/** Apply intent to the live list, and only when it actually changes it. */
+	function applyOverrides() {
+		const registered = new Set(allTools.map((tool) => tool.name));
+		const next = nextActiveTools(pi.getActiveTools(), overrides, registered);
+		if (next) pi.setActiveTools(next);
 	}
 
 	function restoreFromBranch(ctx: ExtensionContext) {
 		allTools = pi.getAllTools();
-		const { enabled, restored } = restoreEnabled(
-			ctx.sessionManager.getBranch(),
-			allTools.map((tool) => tool.name),
-			pi.getActiveTools(),
-		);
-		enabledTools = enabled;
-		// Adopting the session's own set changes nothing; rewriting it would only
-		// risk clobbering a list another extension is managing.
-		if (restored) applyTools();
+		overrides = restoreOverrides(ctx.sessionManager.getBranch());
+		applyOverrides();
 	}
 
 	pi.registerCommand("tools", {
-		description: "Browse every tool with its source, and toggle tools on or off",
+		description: "Browse every tool with its source, and pin tools on or off",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/tools requires TUI mode", "error");
@@ -75,23 +83,48 @@ export default function toolCatalogExtension(pi: ExtensionAPI) {
 			allTools = pi.getAllTools();
 
 			await ctx.ui.custom((tui, theme, _kb, done) => {
-				const items: SettingItem[] = buildRows(allTools, enabledTools).map((row) => ({
-					id: row.name,
-					label: row.label,
-					currentValue: row.value,
-					values: TOGGLE_VALUES,
-					description: row.description,
-				}));
+				const items: SettingItem[] = [];
+				const itemsByName = new Map<string, SettingItem>();
+
+				/** Rebuild every row from the live session, not from what we last drew. */
+				function refresh() {
+					const rows = buildRows(allTools, { active: new Set(pi.getActiveTools()), overrides });
+					items.length = 0;
+					itemsByName.clear();
+					for (const row of rows) {
+						const item: SettingItem = {
+							id: row.name,
+							label: row.label,
+							currentValue: row.value,
+							values: INTENT_VALUES,
+							description: row.description,
+						};
+						items.push(item);
+						itemsByName.set(row.name, item);
+					}
+				}
+
+				refresh();
 
 				const settingsList = new SettingsList(
 					items,
 					Math.min(items.length, MAX_VISIBLE_ROWS),
 					getSettingsListTheme(),
 					(id, newValue) => {
-						if (newValue === CHECKED) enabledTools.add(id);
-						else enabledTools.delete(id);
-						applyTools();
-						persistState();
+						const intent = newValue as ToolIntent;
+						if (intent === "auto") overrides.delete(id);
+						else overrides.set(id, intent);
+						applyOverrides();
+						persistOverrides();
+						// Activity may have changed for this row; redraw them all in place,
+						// since the list holds these item objects and not our rows.
+						const active = new Set(pi.getActiveTools());
+						for (const row of buildRows(allTools, { active, overrides })) {
+							const item = itemsByName.get(row.name);
+							if (!item) continue;
+							item.label = row.label;
+							item.description = row.description;
+						}
 						tui.requestRender();
 					},
 					() => done(undefined),
@@ -99,7 +132,9 @@ export default function toolCatalogExtension(pi: ExtensionAPI) {
 				);
 
 				const container = new Container();
-				container.addChild(new CatalogHeader(theme, () => formatHeader(allTools.length, enabledTools.size)));
+				container.addChild(
+					new CatalogHeader(theme, () => formatHeader(allTools.length, pi.getActiveTools().length)),
+				);
 				container.addChild(settingsList);
 
 				return {
@@ -122,7 +157,7 @@ export default function toolCatalogExtension(pi: ExtensionAPI) {
 		restoreFromBranch(ctx);
 	});
 
-	// Branch navigation can land on a different selection than the one in memory.
+	// Branch navigation can land on different overrides than the ones in memory.
 	pi.on("session_tree", async (_event, ctx) => {
 		restoreFromBranch(ctx);
 	});
