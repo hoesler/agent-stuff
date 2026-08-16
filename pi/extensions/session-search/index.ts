@@ -31,6 +31,14 @@ import type { ConfigSnapshot, SessionSearchConfig } from "./types.ts";
 /** Cap on one `session_read`, in characters. */
 const READ_CHAR_CAP = 8000;
 
+/**
+ * Registered from the start, but kept out of the model's schema until a search
+ * returns a hit: `session_read` takes a session and an entry id, and nobody —
+ * model or user — guesses those cold. Deferring it keeps the resting cost of
+ * this extension to the one tool that can actually be called first.
+ */
+const DEFERRED_TOOL = "session_read";
+
 export interface StatusPaths {
   dbPath: string;
   sessionsDir: string;
@@ -170,7 +178,27 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
   const configNotes = (): string[] =>
     (snapshot?.errors ?? []).map((error) => `session-search: ${error.path}: ${error.message}`);
 
+  /**
+   * Both writes are computed from the live list rather than a remembered one.
+   * `setActiveTools` replaces the whole list, so writing back anything an
+   * extension assembled earlier would deactivate whatever another extension
+   * switched on meanwhile.
+   */
+  const deferRead = (): void => {
+    const live = pi.getActiveTools();
+    if (!live.includes(DEFERRED_TOOL)) return;
+    pi.setActiveTools(live.filter((name) => name !== DEFERRED_TOOL));
+  };
+
+  const offerRead = (): void => {
+    const live = pi.getActiveTools();
+    if (live.includes(DEFERRED_TOOL)) return;
+    pi.setActiveTools([...live, DEFERRED_TOOL]);
+  };
+
   pi.on("session_start", async (_event, ctx) => {
+    // Once, at the start. Never again, so a later pin from /tools stands.
+    deferRead();
     await loadConfig(ctx);
   });
 
@@ -183,31 +211,29 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "session_search",
     label: "Session search",
+    // Kept to what the model cannot recover from a failed call. A malformed
+    // FTS5 expression, a missing search term, and an unhonourable scope all come
+    // back saying what went wrong, so the schema does not also explain them.
     description: [
       "Find a past pi conversation across every project, session, and fork.",
       "",
-      "Two surfaces are indexed:",
-      "- what was SAID — `query` is an FTS5 expression over user and assistant prose,",
-      "  compaction and branch summaries, session names, and labels. Double-quoted",
-      '  phrases, AND/OR/NOT, and prefix* all work: `"session index" AND sqlite`.',
-      "- what was DONE — `touched` globs a file path from tool evidence (narrow it with",
+      "- what was SAID — `query`, over user and assistant prose, compaction and",
+      "  branch summaries, session names, and labels.",
+      "- what was DONE — `touched` globs a file path from tool evidence (with",
       '  action: "write" for "sessions where I changed this file"), and `command`',
-      "  substring-matches a shell command that was run. Tool output is never indexed,",
-      "  so search for the command, not for what it printed.",
+      "  matches a shell command that was run. Tool output is never indexed, so",
+      "  search for the command, not for what it printed.",
       "",
-      "At least one of `query`, `touched`, or `command` is required; the rest narrow.",
-      "",
-      "`scope` says WHERE to look, and defaults to every project. Use `project` for",
-      '"here", `repo` for "this repository including its other worktrees", `lineage`',
-      "for \"earlier in this conversation's fork family\", or pass a path glob such as",
-      "`~/Develop/**` for anywhere else. A scope that cannot be honoured widens and",
-      "says so in the result rather than quietly returning less.",
-      "Each result gives a session id to open with `pi --resume`, an entry id, whether",
-      "the hit sits on the session's main line or an abandoned side branch, and a",
-      "snippet. Use session_read to expand one without leaving this session.",
+      "Each result gives a session id to open with `pi --resume`, an entry id,",
+      "whether the hit sits on the session's main line or an abandoned side branch,",
+      "and a snippet. session_read expands one without leaving this session.",
     ].join("\n"),
     parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: "FTS5 expression over prose" })),
+      query: Type.Optional(
+        Type.String({
+          description: 'FTS5 over prose: "quoted phrases", AND/OR/NOT, prefix*',
+        }),
+      ),
       touched: Type.Optional(
         Type.String({ description: "Glob over a file path from tool evidence, e.g. **/auth.ts" }),
       ),
@@ -221,8 +247,10 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
       ),
       scope: Type.Optional(
         Type.String({
+          // The keywords stay spelled out here: picking a narrower one than you
+          // meant returns less without an error to learn from.
           description:
-            '"all" (default), "project", "repo", "lineage", or a glob over the session\'s working directory',
+            'Where to look. "all" (default) | "project" (this cwd) | "repo" (its worktrees too) | "lineage" (this session\'s fork family) | a path glob',
         }),
       ),
       after: Type.Optional(
@@ -259,6 +287,7 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
               ? { files: lastStats.remainingFiles, bytes: lastStats.remainingBytes }
               : undefined,
         });
+        if (results.length > 0) offerRead();
         const notes = [
           ...configNotes(),
           ...(staleNote ? [staleNote] : []),

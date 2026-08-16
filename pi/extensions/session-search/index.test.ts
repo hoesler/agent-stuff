@@ -79,10 +79,20 @@ function harness() {
 
   const tools = new Map<string, any>();
   const commands = new Map<string, any>();
+  const handlers = new Map<string, any>();
+  // pi activates a tool when it is registered; the extension defers one again.
+  let active: string[] = [];
   const pi = {
-    on: () => {},
-    registerTool: (tool: any) => tools.set(tool.name, tool),
+    on: (event: string, handler: any) => handlers.set(event, handler),
+    registerTool: (tool: any) => {
+      tools.set(tool.name, tool);
+      active = [...active, tool.name];
+    },
     registerCommand: (name: string, command: any) => commands.set(name, command),
+    getActiveTools: () => active,
+    setActiveTools: (names: string[]) => {
+      active = names;
+    },
   } as any;
 
   sessionSearchExtension(pi);
@@ -101,7 +111,16 @@ function harness() {
     JSON.stringify({ version: 1, dbPath: join(root, "index.sqlite"), sessionsDir: sessions }),
   );
 
-  return { tools, commands, ctx, notices };
+  return {
+    tools,
+    commands,
+    handlers,
+    ctx,
+    notices,
+    activeTools: () => pi.getActiveTools(),
+    /** Stands in for another extension switching one of its tools on. */
+    activate: (name: string) => pi.setActiveTools([...pi.getActiveTools(), name]),
+  };
 }
 
 test("session_search finds a hit and session_read expands it", async () => {
@@ -129,6 +148,34 @@ test("session_search finds a hit and session_read expands it", async () => {
   assert.match(transcript, /write \/work\/repo\/src\/auth\.ts/);
   // Tool output is never stored, so it can never be returned.
   assert.doesNotMatch(transcript, /whole file body/);
+});
+
+test("session_read stays out of the schema until a search has something to read", async () => {
+  const { tools, handlers, ctx, activeTools } = harness();
+
+  await handlers.get("session_start")({ type: "session_start" }, ctx);
+  assert.deepEqual(activeTools(), ["session_search"]);
+
+  const empty = await tools
+    .get("session_search")
+    .execute("c1", { query: "nothingmatchesthis" }, undefined, undefined, ctx);
+  assert.equal(empty.details.count, 0);
+  assert.deepEqual(activeTools(), ["session_search"]);
+
+  await tools.get("session_search").execute("c2", { query: "ripgrep" }, undefined, undefined, ctx);
+  assert.deepEqual(activeTools(), ["session_search", "session_read"]);
+});
+
+test("activating session_read leaves another extension's tools where they were", async () => {
+  const { tools, handlers, ctx, activeTools, activate } = harness();
+
+  await handlers.get("session_start")({ type: "session_start" }, ctx);
+  // Another extension switches a tool on between session start and the search.
+  // Writing a remembered list back here would drop it out of the schema.
+  activate("run_experiment");
+
+  await tools.get("session_search").execute("c1", { query: "ripgrep" }, undefined, undefined, ctx);
+  assert.deepEqual(activeTools(), ["session_search", "run_experiment", "session_read"]);
 });
 
 test("scope narrows to the working directory, and an unhonourable scope says what it searched instead", async () => {

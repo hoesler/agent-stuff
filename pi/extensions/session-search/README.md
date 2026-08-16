@@ -135,6 +135,16 @@ read as an answer.
 
 Expands a hit without leaving the current session.
 
+It is registered from the start but stays out of the model's tool schema until a
+`session_search` returns at least one hit, at which point it is switched on for
+the rest of the session. Its arguments are a session id and an entry id, which
+nobody guesses cold — so before the first search it is a tool that cannot be
+called, and the schema it would occupy is the resting cost of the extension in
+every session that never searches. `/tools` shows it appear.
+
+A pin from `/tools` stands: the tool is deferred once at session start and never
+deactivated again.
+
 - `session` — id, unambiguous id prefix, or file path
 - one of `entry` plus `around` (default 10 surrounding entries), `branch` with a
   leaf id for that whole path, or `last` for the final N entries
