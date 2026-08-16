@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import type { AgentConfig } from "./agents.ts";
-import { runSingleAgent, type SpawnChild } from "./index.ts";
+import { runSingleAgent, type SpawnChild } from "./subagent-tool.ts";
 
 const agents = [
 	{
