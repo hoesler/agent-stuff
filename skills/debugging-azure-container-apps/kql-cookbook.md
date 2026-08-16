@@ -1,8 +1,45 @@
-# KQL Cookbook — Container Apps
+# KQL Cookbook — Container Apps and Jobs
 
-Companion to SKILL.md. Run these through the `query_log` helper in [access.md](access.md). Substitute `<app-name>` throughout.
+Companion to SKILL.md. Run these through the `query_log` helper in [access.md](access.md) — **after `az_gate` has printed OK**. Substitute `<app-name>` throughout.
 
 Queries above the "Functions images" heading apply to any container app. Those below assume a Functions image.
+
+## Probe the schema first
+
+```kql
+ContainerAppConsoleLogs_CL | getschema
+```
+
+```kql
+ContainerAppConsoleLogs_CL | take 1
+```
+
+This is not optional ceremony: apps filter on `ContainerAppName_s`, Container App Jobs on `ContainerJobName_s`, and the log column is `Log_s` or `log_s` depending on the workspace. A filter on a column that does not exist returns zero rows and reads exactly like "the app logged nothing." Substitute the columns you actually saw into every query below.
+
+## Container App Job — executions and output
+
+```kql
+ContainerAppConsoleLogs_CL
+| where ContainerJobName_s == "<job-name>"
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, ExecutionName_s, ContainerId_s, Log_s
+| order by TimeGenerated asc
+| take 200
+```
+
+Summarise per execution to see which run failed:
+
+```kql
+ContainerAppConsoleLogs_CL
+| where ContainerJobName_s == "<job-name>"
+| where TimeGenerated > ago(7d)
+| summarize Lines=count(), Errors=countif(Log_s has "Error" or Log_s has "Traceback"),
+            First=min(TimeGenerated), Last=max(TimeGenerated)
+    by ExecutionName_s
+| order by First desc
+```
+
+A job with zero rows for an execution that ARM reports as `Failed` never got as far as running your code — go to `ContainerAppSystemLogs_CL` for image pull and startup errors.
 
 ## Did the container start? (system logs first)
 

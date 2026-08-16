@@ -1,6 +1,6 @@
 ---
 name: debugging-azure-container-apps
-description: Use when debugging any Azure Container App - restart loops, crashes, 503s, image pull failures, probe/health-check failures, a revision that broke after deploy - and for container apps running a Functions image, where FunctionLoadError, WorkerInitError, "Host state changed to Error", MS_FUNCTION_LOGS entries, or functions 404ing after a deploy also apply. Covers querying ContainerAppConsoleLogs / ContainerAppSystemLogs and inspecting revisions via ARM.
+description: Use when debugging any Azure Container App or Container App Job - restart loops, crashes, 503s, image pull failures, probe/health-check failures, failed job executions, a revision that broke after deploy - and for containers running a Functions image, where FunctionLoadError, WorkerInitError, "Host state changed to Error", MS_FUNCTION_LOGS entries, or functions 404ing after a deploy also apply. Also use when reaching Azure logs is itself the problem: InvalidTokenError, SignatureVerificationFailed, 401/403 against management.azure.com or api.loganalytics.io, missing bearer token in a sandbox, or an empty ContainerAppConsoleLogs result.
 ---
 
 # Debugging Azure Container Apps
@@ -16,18 +16,21 @@ Two things drive most wrong conclusions:
 
 ## Diagnosis Flow
 
-0. **Establish how you reach Azure, before running any Azure command:**
+0. **Establish access as a verified state, before any diagnosis.** Access is a tuple — credential variable, base URL, query mode, workspace identifier — not just "a token." Resolve all of it in one bounded pass:
 
    ```bash
-   printenv NONO_CAP_FILE
-   printenv | grep -iE 'azure|bearer|arm_|token'
+   SKILL_DIR=<directory containing this skill>   # e.g. ~/.agents/skills/debugging-azure-container-apps
+   source "$SKILL_DIR/azure-access.sh"
+   az_resolve                                          # credential + ARM base + ARM probe
+   az_workspaces                                       # workspaceResourceName, resourceGroup, customerId
+   az_gate <workspaceResourceGroup> <workspaceResourceName> <subscription-id>
    ```
 
-   Inside a sandbox (`NONO_CAP_FILE` set), use the injected bearer token — **`az` cannot work there and will fail on `~/.azure` no matter how you retry it.** Outside one, use `az` or a service principal. Full branch table and failure modes: [access.md](access.md).
+   `az_gate` runs `print AccessProbe = 1`. **Until it prints OK, you do not have log access** — a working ARM call does not imply one. If any step fails, its Azure error code maps to exactly one corrective action in the decision table in [access.md](access.md). Take that action; do not try other tokens, base URLs, headers, or api-versions.
 
-1. **Orient** — find the app, its environment, and the linked workspace ([access.md](access.md)).
-2. **Check revision state** — provisioned, running, and actually receiving traffic?
-3. **System logs** — did the container start at all? Image pull, probes, OOM, scaling.
+1. **Orient** — find the app or job, its environment, and the linked workspace ([access.md](access.md)).
+2. **Check revision state** (apps) or **execution history** (jobs) — provisioned, running, and actually receiving traffic?
+3. **Probe the table schema**, then read **system logs** — did the container start at all? Image pull, probes, OOM, scaling.
 4. **Console logs, unfiltered** — what did the app itself say?
 5. **If it runs a Functions image** — apply the layer model below before believing any host-level error.
 6. **Compare against the last working revision** — diff the templates.
@@ -43,18 +46,35 @@ Queries: [kql-cookbook.md](kql-cookbook.md). Auth, the query helper, and ARM cal
 
 **The trap:** debugging a container that won't start by reading console logs. There are none — it never got far enough to write any.
 
-Workspaces configured for resource-specific tables drop the `_CL` suffix. A wrong table name returns an error easily misread as an empty result — see the probe query in [access.md](access.md).
+Workspaces configured for resource-specific tables drop the `_CL` suffix. A wrong table name returns an error easily misread as an empty result — see table discovery in [access.md](access.md).
+
+## Container App Jobs are not apps
+
+`Microsoft.App/jobs` share the environment, the workspace, and both log tables with apps — but not the schema or the lifecycle. **Run `| getschema` before writing any filter** ([access.md](access.md)); a filter on a column the table does not have returns zero rows and is indistinguishable from "nothing happened."
+
+| | Container app | Container App Job |
+|---|---|---|
+| Name column | `ContainerAppName_s` | `ContainerJobName_s` |
+| Log column | `Log_s` | `Log_s` or `log_s` |
+| Unit of work | revision + replicas | execution + replicas |
+| Lifecycle | long-running; restarts are failures | starts, runs, exits; exit 0 is success |
+| Where state lives | `.properties.configuration.ingress.traffic` | `/executions` under the job resource |
+
+A job has no ingress, no traffic split, and no `latestRevisionName`. "Not running" is its normal state — check the execution list and its `.properties.status` before treating silence as a fault.
 
 ## Symptom → where to look
 
 | Symptom | Look at | First thing to check |
 |---------|---------|---------------------|
+| `InvalidTokenError` / `SignatureVerificationFailed` / 401 / 403 | Access tuple | Wrong audience or wrong query mode — decision table in [access.md](access.md). Not a KQL problem |
 | 503 on every request | System logs, ingress | Container never started, or `targetPort` ≠ the port the app listens on |
 | Restart loop | System logs, then console | Probe failures, OOM kill, then the app's last output before exit |
 | `ImagePullBackOff` / no revision | System logs, ARM | Registry credentials, image tag typo, private registry access |
 | Worked before this deploy | ARM revision diff | Image tag, env vars, secrets, resource limits |
 | Intermittent failures | Traffic split | Two revisions live — you may be seeing only one |
 | Scaled to zero, slow first request | System logs | Cold start; check `minReplicas` |
+| **Job:** no logs for a job name | Table schema | Filtered on `ContainerAppName_s`; jobs use `ContainerJobName_s` |
+| **Job:** execution never produced output | ARM `/executions`, system logs | Trigger fired at all? `replicaTimeout`, `replicaRetryLimit`, image pull |
 | **Functions:** every endpoint 404s | Console, worker layer | All functions failed to load — import or dependency error |
 | **Functions:** one endpoint 404s | Console, worker layer | That function failed to load, or was never deployed |
 | **Functions:** `Host state changed to Error` | Console, worker layer | Worker load failures upstream of it — not the cause itself |
@@ -95,13 +115,18 @@ If these are the *only* errors present, you are looking at the wrong time window
 
 | Mistake | Why it's wrong |
 |---------|---------------|
-| Concluding "no logs" from an empty result | Ingestion lag, wrong table name, or wrong time window |
+| Treating a successful ARM call as proof of log access | Different audience, path, and endpoint rule. Only `az_gate` proves it |
+| Trying another token, base URL, header, or api-version after an auth error | Each access error has one corrective action ([access.md](access.md)). Cycling combinations never finds it |
+| Treating any env var containing "token" as an Azure credential | `NONO_PROXY_TOKEN` is the sandbox's proxy handle. Azure returns `401 InvalidTokenError` |
+| Using the `customerId` GUID as the workspace name in an ARM path | ARM needs `workspaceResourceName`; the GUID belongs only to the data-plane API |
+| Assuming app columns for a Container App Job | Jobs use `ContainerJobName_s`; the wrong column returns zero rows silently |
+| Concluding "no logs" from an empty result | Ingestion lag, wrong table name, wrong column, or wrong time window |
 | Reading only console logs | Startup, probe, and image-pull failures appear only in system logs |
 | Assuming `latestRevisionName` serves traffic | With a traffic split the newest revision may take 0% — check `properties.configuration.ingress.traffic` |
 | Debugging the app when the platform never started it | Confirm the container is running before analysing application behaviour |
 | Filtering out `MS_FUNCTION_LOGS` early | These carry the actual worker errors as structured JSON |
 | Treating `Host state changed to Error` as the cause | Almost always secondary to worker initialization failure |
-| Using `api.loganalytics.io` without separate auth | Use the management API proxy — see [access.md](access.md) |
+| Using `api.loganalytics.io` with an ARM-audience token | The data plane needs its own audience — use the ARM workspace query mode ([access.md](access.md)) |
 | Applying the Functions queries to a Consumption / App Service Function App | Those log to `FunctionAppLogs` and App Insights `traces`, not `ContainerAppConsoleLogs` |
 
 ## Ingestion Delay
