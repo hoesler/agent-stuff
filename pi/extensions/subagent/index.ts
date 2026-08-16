@@ -12,6 +12,7 @@
 import * as path from "node:path";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type AgentDiscoveryResult, discoverAgents } from "./agents.ts";
+import { createOracleTool } from "./oracle-tool.ts";
 import { formatPromotedGuidance } from "./promotion.ts";
 import { createSubagentTool } from "./subagent-tool.ts";
 
@@ -36,6 +37,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	let fingerprint = catalogFingerprint(discovery);
 	pi.registerTool(createSubagentTool(discovery));
+	pi.registerTool(createOracleTool());
 
 	pi.on("session_start", (_event, ctx) => {
 		const next = discoverAgents({
