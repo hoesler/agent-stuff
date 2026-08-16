@@ -99,6 +99,52 @@ test("doctor reports models registered but currently unavailable", () => {
   assert.deepEqual(report.issues, ["high: model is registered but currently unavailable openai/sol"]);
 });
 
+const model: ModeModel = { provider: "openai", id: "sol", reasoning: true };
+const registry = {
+  find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+  available: () => [model],
+};
+
+test("doctor names the active mode and every route that resolves for it", () => {
+  const report = formatDoctorReport(inspectConfig(snapshot, registry, "f9", {
+    activeMode: "high",
+    routes: [{ key: "oracle", state: "active", model: "anthropic/claude-fable-5:high", description: "a second opinion" }],
+  }));
+  assert.match(report, /Routes \(active mode: high\):/);
+  assert.match(report, /- oracle -> anthropic\/claude-fable-5:high — a second opinion/);
+});
+
+test("doctor says why a configured route is not available", () => {
+  const report = formatDoctorReport(inspectConfig(snapshot, registry, "f9", {
+    activeMode: "high",
+    routes: [
+      { key: "judge", state: "redundant", model: "openai/sol:high" },
+      { key: "scout", state: "unset" },
+      { key: "oracle", state: "off" },
+    ],
+  }));
+  assert.match(report, /- judge -> unavailable \(openai\/sol:high is the model already running\)/);
+  assert.match(report, /- scout -> unavailable \(no target for this mode\)/);
+  assert.match(report, /- oracle -> unavailable \(this mode opts out\)/);
+});
+
+test("doctor reports an empty route table rather than omitting the section", () => {
+  const report = formatDoctorReport(inspectConfig(snapshot, registry, "f9", { activeMode: "high", routes: [] }));
+  assert.match(report, /Routes: none configured/);
+});
+
+test("doctor omits routes entirely when the configuration could not be loaded", () => {
+  const report = formatDoctorReport(inspectConfig({
+    ok: false,
+    path: "/tmp/modes.json",
+    fromEnvironment: false,
+    fingerprint: "missing",
+    reason: "invalid",
+    errors: [{ path: "root", message: "invalid JSON" }],
+  }, registry, "f9", { activeMode: "error", routes: [] }));
+  assert.doesNotMatch(report, /Routes/);
+});
+
 test("mode list formats every mode deterministically", () => {
   assert.equal(formatModeList(snapshot.config), [
     "high: openai/sol · thinking:high",

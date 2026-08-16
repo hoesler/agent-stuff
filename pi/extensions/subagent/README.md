@@ -187,6 +187,18 @@ None of its own. Point the `oracle` route at a model in `model-modes.json`:
 }
 ```
 
+`/mode doctor` reports whether the key resolves for the mode you are in, and
+when it does not, which of the reasons in the table below applies:
+
+```text
+Routes (active mode: fable):
+- oracle -> unavailable (this mode opts out)
+```
+
+That is the direct answer to "is the oracle live right now?", and it is read
+from the same resolution the tool dispatches through — so a tool missing from
+the list and a route missing from the report always agree.
+
 ## Availability
 
 Each tool is advertised only while it can do anything:
@@ -209,6 +221,8 @@ The `subagent` row is what a fresh install notices: with no personas configured,
 | Neither personas nor route | Both inactive; the extension advertises nothing |
 
 Every direction produces silence rather than a dangling instruction. The route is read again at call time, so a `/mode` switch between the last sync and the call is seen: the oracle then returns an error naming the fix rather than dispatching to nothing.
+
+Silence is the correct behavior and an awkward thing to debug, which is what the routes section of `/mode doctor` is for: the tool list shows only that the oracle is absent, while the report separates "this mode opts out" from "suppressed as redundant" from "configured, but only for another mode". The first row is the one case the report cannot explain — with no `model-modes` installed there is no `/mode` command to run.
 
 ## Resolved model display
 

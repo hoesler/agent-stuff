@@ -8,6 +8,24 @@ export interface ResolvedRoute {
   description?: string;
 }
 
+/**
+ * Why a configured key does or does not resolve right now.
+ *
+ * `off` and `unset` differ in intent — one mode said no, the other never said
+ * anything — and a consumer that only sees "no route" cannot tell them apart.
+ * Only the doctor needs the distinction; publishing keeps using `active` alone.
+ */
+export type RouteState = "active" | "off" | "redundant" | "unset";
+
+/** One configured key, judged against the active mode and the live selection. */
+export interface RouteStatus {
+  key: string;
+  state: RouteState;
+  /** The target's model string. Present for `active` and `redundant`. */
+  model?: string;
+  description?: string;
+}
+
 /** Same rendering as a mode's model string, so `:off` never appears. */
 export function routeModelString(target: RouteTarget): string {
   const base = `${target.provider}/${target.model}`;
@@ -15,8 +33,8 @@ export function routeModelString(target: RouteTarget): string {
 }
 
 /**
- * Resolve every configured route key against the active mode and the live
- * selection.
+ * Judge every configured route key against the active mode and the live
+ * selection, keeping the ones that do not resolve and saying why.
  *
  * `mode:custom` and `mode:error` carry no mode entry, so they fall through to
  * `defaultRoutes` — which is the point of that field: a session pinned with
@@ -24,32 +42,62 @@ export function routeModelString(target: RouteTarget): string {
  *
  * A target equal to the live provider/model/thinkingLevel triple resolves to
  * nothing: a second opinion from the model already running is not one.
+ *
+ * The key universe is every key named anywhere in the config, not just the ones
+ * reaching the active mode. A key configured only in some *other* mode is the
+ * likeliest reason a route the user believes they set is missing, and reporting
+ * it as `unset` is the only way the doctor can say so. Keys are sorted, so both
+ * the catalog and the report are stable across turns.
  */
-export function resolveRoutes(
+export function describeRoutes(
   config: ModeConfig,
   active: ActiveMode,
   effective: ActualSelection,
-): ResolvedRoute[] {
+): RouteStatus[] {
   const modeRoutes = active.kind === "named" ? active.mode.routes : undefined;
-  const keys = new Set([...Object.keys(config.defaultRoutes ?? {}), ...Object.keys(modeRoutes ?? {})]);
-  const resolved: ResolvedRoute[] = [];
+  const keys = new Set([
+    ...Object.keys(config.defaultRoutes ?? {}),
+    ...config.modes.flatMap((mode) => Object.keys(mode.routes ?? {})),
+  ]);
+  const statuses: RouteStatus[] = [];
   for (const key of [...keys].sort()) {
     // `??` and not `||`: `false` is not nullish, so an explicit opt-out in the
-    // active mode short-circuits the default and then fails the guard below.
+    // active mode short-circuits the default rather than inheriting it.
     const entry = modeRoutes?.[key] ?? config.defaultRoutes?.[key];
-    if (!entry) continue;
-    if (
-      entry.provider === effective.provider &&
-      entry.model === effective.model &&
-      entry.thinkingLevel === effective.thinkingLevel
-    ) {
+    if (entry === undefined) {
+      statuses.push({ key, state: "unset" });
       continue;
     }
-    resolved.push({
+    if (entry === false) {
+      statuses.push({ key, state: "off" });
+      continue;
+    }
+    const redundant =
+      entry.provider === effective.provider &&
+      entry.model === effective.model &&
+      entry.thinkingLevel === effective.thinkingLevel;
+    statuses.push({
       key,
+      state: redundant ? "redundant" : "active",
       model: routeModelString(entry),
       ...(entry.description ? { description: entry.description } : {}),
     });
   }
-  return resolved;
+  return statuses;
+}
+
+/**
+ * The keys that currently resolve, in the shape publishers and the catalog use.
+ *
+ * The narrowing lives here rather than in a second resolution pass, so what the
+ * doctor reports and what a consumer is handed cannot drift apart.
+ */
+export function activeRoutes(statuses: RouteStatus[]): ResolvedRoute[] {
+  return statuses
+    .filter((status) => status.state === "active")
+    .map((status) => ({
+      key: status.key,
+      model: status.model!,
+      ...(status.description ? { description: status.description } : {}),
+    }));
 }
