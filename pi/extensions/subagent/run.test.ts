@@ -1,6 +1,7 @@
 /**
- * Termination behaviour of a subagent run, exercised against real child
+ * Termination behaviour of an agent run, exercised against real child
  * processes: a run that is killed must still hand back what it produced.
+ * Both tools in this extension reach the child through this one seam.
  */
 
 import assert from "node:assert/strict";
@@ -10,20 +11,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import type { AgentConfig } from "./agents.ts";
-import { runSingleAgent, type SpawnChild } from "./index.ts";
-
-const agents = [
-	{
-		name: "stub",
-		description: "Stub persona",
-		systemPrompt: "",
-		source: "user",
-		filePath: "/dev/null",
-	},
-] as AgentConfig[];
-
-const makeDetails = (results: unknown[]) => ({ mode: "single", projectAgentsDir: null, results }) as never;
+import { type SpawnChild, spawnAgentRun } from "./run.ts";
 
 /** A child that emits one assistant message, then hangs until it is killed. */
 const hangingChild: SpawnChild = () => {
@@ -48,12 +36,9 @@ const hangingChild: SpawnChild = () => {
 const quickChild: SpawnChild = () => spawn(process.execPath, ["-e", ""], { stdio: ["ignore", "pipe", "pipe"] });
 
 function run(overrides: Record<string, unknown>) {
-	return runSingleAgent({
-		defaultCwd: mkdtempSync(join(tmpdir(), "subagent-run-")),
-		agents,
-		agentName: "stub",
+	return spawnAgentRun({
 		task: "do a thing",
-		makeDetails,
+		cwd: mkdtempSync(join(tmpdir(), "agent-run-")),
 		...overrides,
 	});
 }
@@ -124,19 +109,39 @@ describe("abort", () => {
 	});
 });
 
-describe("unknown agent", () => {
-	test("fails without spawning anything, naming the closest match", async () => {
-		let spawned = false;
-		const result = await run({
-			agentName: "scowt",
-			spawnChild: (() => {
-				spawned = true;
+describe("dispatch arguments", () => {
+	test("omits --model and --tools when none are given, and never appends a system prompt", async () => {
+		let captured: string[] = [];
+		await run({
+			spawnChild: ((args: string[]) => {
+				captured = args;
 				return quickChild([], "");
 			}) as SpawnChild,
 		});
 
-		assert.equal(spawned, false);
-		assert.equal(result.exitCode, 1);
-		assert.match(result.stderr, /Unknown agent: "scowt"/);
+		assert.deepEqual(captured, ["--mode", "json", "-p", "--no-session", "do a thing"]);
+	});
+
+	test("passes the resolved model and tool list through verbatim", async () => {
+		let captured: string[] = [];
+		await run({
+			model: "anthropic/claude-fable-5:high",
+			tools: ["read", "grep", "find", "ls"],
+			spawnChild: ((args: string[]) => {
+				captured = args;
+				return quickChild([], "");
+			}) as SpawnChild,
+		});
+
+		assert.deepEqual(captured.slice(0, 8), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--model",
+			"anthropic/claude-fable-5:high",
+			"--tools",
+			"read,grep,find,ls",
+		]);
 	});
 });

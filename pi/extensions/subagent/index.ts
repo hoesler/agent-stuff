@@ -12,19 +12,14 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Message } from "@earendil-works/pi-ai";
 import {
 	type AgentToolResult,
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
 	type ToolDefinition,
-	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { type TSchema, Type } from "typebox";
@@ -36,14 +31,19 @@ import {
 	suggestAgentName,
 } from "./agents.ts";
 import { buildAgentNameSchema, buildToolDescription, formatAgentNames } from "./catalog.ts";
-import {
-	formatModelDisplay,
-	type ModelSource,
-	resolveModelFromMessage,
-	resolveModelSelection,
-} from "./model-display.ts";
+import { type DisplayItem, formatToolCall, formatUsageStats, getDisplayItems } from "./display.ts";
+import { formatModelDisplay, type ModelSource, resolveModelSelection } from "./model-display.ts";
 import { formatPromotedGuidance } from "./promotion.ts";
 import { resolveModelReference } from "./routes.ts";
+import {
+	type AgentRunResult,
+	describeRunFailure,
+	emptyUsage,
+	getFinalOutput,
+	isFailedRun,
+	type SpawnChild,
+	spawnAgentRun,
+} from "./run.ts";
 
 /**
  * Persona files this package ships as starting points. They are examples to
@@ -57,133 +57,19 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 
-function formatTokens(count: number): string {
-	if (count < 1000) return count.toString();
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	return `${(count / 1000000).toFixed(1)}M`;
-}
+const isFailedResult = isFailedRun;
+const describeFailure = describeRunFailure;
 
-function formatUsageStats(
-	usage: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-		cost: number;
-		contextTokens?: number;
-		turns?: number;
-	},
-	modelDisplay?: string,
-): string {
-	const parts: string[] = [];
-	if (usage.turns) parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
-	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
-	if (usage.output) parts.push(`↓${formatTokens(usage.output)}`);
-	if (usage.cacheRead) parts.push(`R${formatTokens(usage.cacheRead)}`);
-	if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`);
-	if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
-	if (usage.contextTokens && usage.contextTokens > 0) {
-		parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
-	}
-	if (modelDisplay) parts.push(modelDisplay);
-	return parts.join(" ");
-}
+export type { SpawnChild } from "./run.ts";
 
-function formatToolCall(
-	toolName: string,
-	args: Record<string, unknown>,
-	themeFg: (color: any, text: string) => string,
-): string {
-	const shortenPath = (p: string) => {
-		const home = os.homedir();
-		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
-	};
-
-	switch (toolName) {
-		case "bash": {
-			const command = (args.command as string) || "...";
-			const preview = command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
-		}
-		case "read": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const offset = args.offset as number | undefined;
-			const limit = args.limit as number | undefined;
-			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
-				const startLine = offset ?? 1;
-				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				text += themeFg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
-			}
-			return themeFg("muted", "read ") + text;
-		}
-		case "write": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const content = (args.content || "") as string;
-			const lines = content.split("\n").length;
-			let text = themeFg("muted", "write ") + themeFg("accent", filePath);
-			if (lines > 1) text += themeFg("dim", ` (${lines} lines)`);
-			return text;
-		}
-		case "edit": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			return themeFg("muted", "edit ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "ls": {
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "ls ") + themeFg("accent", shortenPath(rawPath));
-		}
-		case "find": {
-			const pattern = (args.pattern || "*") as string;
-			const rawPath = (args.path || ".") as string;
-			return themeFg("muted", "find ") + themeFg("accent", pattern) + themeFg("dim", ` in ${shortenPath(rawPath)}`);
-		}
-		case "grep": {
-			const pattern = (args.pattern || "") as string;
-			const rawPath = (args.path || ".") as string;
-			return (
-				themeFg("muted", "grep ") +
-				themeFg("accent", `/${pattern}/`) +
-				themeFg("dim", ` in ${shortenPath(rawPath)}`)
-			);
-		}
-		default: {
-			const argsStr = JSON.stringify(args);
-			const preview = argsStr.length > 50 ? `${argsStr.slice(0, 50)}...` : argsStr;
-			return themeFg("accent", toolName) + themeFg("dim", ` ${preview}`);
-		}
-	}
-}
-
-interface UsageStats {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	cost: number;
-	contextTokens: number;
-	turns: number;
-}
-
-interface SingleResult {
+interface SingleResult extends AgentRunResult {
 	agent: string;
 	agentSource: AgentSource | "unknown";
 	task: string;
-	exitCode: number;
-	messages: Message[];
-	stderr: string;
-	usage: UsageStats;
-	/** The model string requested via task/global/agent config, before resolution. */
+	/** The model string dispatched to the child, after route resolution. */
 	requestedModel?: string;
 	/** How the requested model was selected. */
 	modelSource: ModelSource;
-	/** The model actually resolved from the child assistant message (provider/model[.responseModel]). */
-	resolvedModel?: string;
-	stopReason?: string;
-	errorMessage?: string;
 	step?: number;
 }
 
@@ -191,52 +77,6 @@ interface SubagentDetails {
 	mode: "single" | "parallel" | "chain";
 	projectAgentsDir: string | null;
 	results: SingleResult[];
-}
-
-/** Terminal states a run can end in: a non-zero exit, or a stop the child or we ourselves forced. */
-const FAILED_STOP_REASONS = new Set(["error", "aborted", "timeout"]);
-
-function isFailedResult(result: SingleResult): boolean {
-	return result.exitCode !== 0 || (result.stopReason !== undefined && FAILED_STOP_REASONS.has(result.stopReason));
-}
-
-/**
- * Why a run failed, plus whatever it produced first. A run killed part-way
- * usually has useful partial output, and for a timeout that partial output is
- * the only signal the caller has for choosing a larger budget next time.
- */
-function describeFailure(result: SingleResult): string {
-	const reason = result.errorMessage || result.stderr.trim() || "";
-	const partial = getFinalOutput(result.messages).trim();
-	if (reason && partial) return `${reason}\n\nPartial output before termination:\n${partial}`;
-	return reason || partial || "(no output)";
-}
-
-function getFinalOutput(messages: Message[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
-			}
-		}
-	}
-	return "";
-}
-
-type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
-
-function getDisplayItems(messages: Message[]): DisplayItem[] {
-	const items: DisplayItem[] = [];
-	for (const msg of messages) {
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") items.push({ type: "text", text: part.text });
-				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
-			}
-		}
-	}
-	return items;
 }
 
 async function mapWithConcurrencyLimit<TIn, TOut>(
@@ -259,49 +99,7 @@ async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-async function writePromptToTempFile(agentName: string, prompt: string): Promise<{ dir: string; filePath: string }> {
-	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
-	const safeName = agentName.replace(/[^\w.-]+/g, "_");
-	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	await withFileMutationQueue(filePath, async () => {
-		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
-	});
-	return { dir: tmpDir, filePath };
-}
-
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-
-	const execName = path.basename(process.execPath).toLowerCase();
-	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
-	if (!isGenericRuntime) {
-		return { command: process.execPath, args };
-	}
-
-	return { command: "pi", args };
-}
-
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
-
-/**
- * Spawns the child pi process. Injectable so the termination logic — timeout,
- * abort, and the partial result each produces — can be tested against a real
- * child process without a running pi.
- */
-export type SpawnChild = (args: string[], cwd: string) => ChildProcess;
-
-const spawnPi: SpawnChild = (args, cwd) => {
-	const invocation = getPiInvocation(args);
-	return spawn(invocation.command, invocation.args, {
-		cwd,
-		shell: false,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-};
 
 interface RunAgentOptions {
 	defaultCwd: string;
@@ -337,7 +135,7 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 			exitCode: 1,
 			messages: [],
 			stderr: `Unknown agent: "${agentName}".${didYouMean} Available agents: ${formatAgentNames(agents)}.`,
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			usage: emptyUsage(),
 			requestedModel: selection.model,
 			modelSource: selection.source,
 			step,
@@ -350,21 +148,15 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 	// provider/model string does. An unresolved key passes through unchanged and
 	// the child errors on it, exactly as it did before routes existed.
 	const dispatchModel = resolveModelReference(selection.model);
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (dispatchModel) args.push("--model", dispatchModel);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
-	let tmpPromptDir: string | null = null;
-	let tmpPromptPath: string | null = null;
-
-	const currentResult: SingleResult = {
+	const result: SingleResult = {
 		agent: agentName,
 		agentSource: agent.source,
 		task,
 		exitCode: 0,
 		messages: [],
 		stderr: "",
-		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		usage: emptyUsage(),
 		// The dispatched string, not the raw request: the usage line re-attaches a
 		// `:thinkingLevel` suffix from this field, and a bare route key carries none.
 		// `modelSource` still names who picked the value, so [agent] and
@@ -377,150 +169,30 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 	const emitUpdate = () => {
 		if (onUpdate) {
 			onUpdate({
-				content: [{ type: "text", text: getFinalOutput(currentResult.messages) || "(running...)" }],
-				details: makeDetails([currentResult]),
+				content: [{ type: "text", text: getFinalOutput(result.messages) || "(running...)" }],
+				details: makeDetails([result]),
 			});
 		}
 	};
 
-	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
-		}
-
-		args.push(`Task: ${task}`);
-
-		// Only positive, finite budgets bound the run; anything else means unbounded,
-		// so a malformed value cannot silently kill a subagent on the spot.
-		const timeoutMs =
-			options.timeoutSeconds && Number.isFinite(options.timeoutSeconds) && options.timeoutSeconds > 0
-				? options.timeoutSeconds * 1000
-				: undefined;
-		let termination: "aborted" | "timeout" | undefined;
-
-		const exitCode = await new Promise<number>((resolve) => {
-			const proc = (options.spawnChild ?? spawnPi)(args, options.cwd ?? defaultCwd);
-			let buffer = "";
-
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
-
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
-					currentResult.messages.push(msg);
-
-					if (msg.role === "assistant") {
-						currentResult.usage.turns++;
-						const usage = msg.usage;
-						if (usage) {
-							currentResult.usage.input += usage.input || 0;
-							currentResult.usage.output += usage.output || 0;
-							currentResult.usage.cacheRead += usage.cacheRead || 0;
-							currentResult.usage.cacheWrite += usage.cacheWrite || 0;
-							currentResult.usage.cost += usage.cost?.total || 0;
-							currentResult.usage.contextTokens = usage.totalTokens || 0;
-						}
-						if (!currentResult.resolvedModel) currentResult.resolvedModel = resolveModelFromMessage(msg);
-						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
-					}
-					emitUpdate();
-				}
-
-				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
-					emitUpdate();
-				}
-			};
-
-			proc.stdout?.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
-
-			proc.stderr?.on("data", (data) => {
-				currentResult.stderr += data.toString();
-			});
-
-			let killTimer: NodeJS.Timeout | undefined;
-			let budgetTimer: NodeJS.Timeout | undefined;
-
-			const terminate = (reason: "aborted" | "timeout") => {
-				termination ??= reason;
-				proc.kill("SIGTERM");
-				killTimer ??= setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 5000);
-			};
-			const onAbort = () => terminate("aborted");
-
-			// Every timer and listener is bound to this one child, so all of them are
-			// released when it exits: a chain reusing one signal across steps would
-			// otherwise leave a listener per completed step, and the SIGKILL fallback
-			// would hold the event loop open for five seconds after a clean exit.
-			const cleanup = () => {
-				if (killTimer) clearTimeout(killTimer);
-				if (budgetTimer) clearTimeout(budgetTimer);
-				signal?.removeEventListener("abort", onAbort);
-			};
-
-			proc.on("close", (code) => {
-				cleanup();
-				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
-			});
-
-			proc.on("error", () => {
-				cleanup();
-				resolve(1);
-			});
-
-			if (timeoutMs !== undefined) budgetTimer = setTimeout(() => terminate("timeout"), timeoutMs);
-
-			if (signal) {
-				if (signal.aborted) terminate("aborted");
-				else signal.addEventListener("abort", onAbort, { once: true });
-			}
-		});
-
-		currentResult.exitCode = exitCode;
-		if (termination) {
-			// Return the partial run rather than throwing it away. Everything the child
-			// produced before it was killed — output, tool calls, usage, cost — is
-			// already on `currentResult`, and for a chain or a parallel batch, throwing
-			// here would discard its siblings' completed results too.
-			currentResult.stopReason = termination;
-			if (termination === "timeout") {
-				currentResult.errorMessage = `Timed out after ${options.timeoutSeconds}s and was terminated.`;
-			}
-			if (currentResult.exitCode === 0) currentResult.exitCode = 1;
-		}
-		return currentResult;
-	} finally {
-		if (tmpPromptPath)
-			try {
-				fs.unlinkSync(tmpPromptPath);
-			} catch {
-				/* ignore */
-			}
-		if (tmpPromptDir)
-			try {
-				fs.rmdirSync(tmpPromptDir);
-			} catch {
-				/* ignore */
-			}
-	}
+	const run = await spawnAgentRun({
+		model: dispatchModel,
+		tools: agent.tools,
+		systemPrompt: agent.systemPrompt,
+		promptName: agent.name,
+		// The `Task: ` framing belongs to persona delegation, not to every child.
+		task: `Task: ${task}`,
+		cwd: options.cwd ?? defaultCwd,
+		timeoutSeconds: options.timeoutSeconds,
+		signal,
+		onUpdate: (partial) => {
+			Object.assign(result, partial);
+			emitUpdate();
+		},
+		spawnChild: options.spawnChild,
+	});
+	Object.assign(result, run);
+	return result;
 }
 
 /**
