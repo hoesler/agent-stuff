@@ -1,6 +1,15 @@
 # Subagent
 
-Delegate tasks to specialized subagents, each running in a separate `pi` process with its own isolated context window.
+Delegation to a child `pi` process, as two tools.
+
+| Tool | What it is |
+| --- | --- |
+| `subagent` | Delegate a task to a **persona** — a Markdown file you own — running in a separate `pi` process with its own context window. Single, parallel, and chained modes. |
+| `oracle` | Escalate a hard question to a **model** — a deliberately different one, in a fresh context, with read-only tools and no memory of your conversation. |
+
+One extension owns both because they share a child-process runner, and an extension directory has to be copyable on its own: everything under `pi/extensions/subagent/` imports only from itself. The single edge leaving the directory is the optional `globalThis` route contract in `routes.ts`, which is dependency-free by construction.
+
+Everything from here to [Oracle](#oracle) is about `subagent`.
 
 ## Modes
 
@@ -45,7 +54,7 @@ Each agent file's frontmatter supports `name`, `description`, `tools` (comma-sep
 
 ### Examples
 
-`examples/agents/` holds five personas to copy and edit — `general-purpose`, `oracle`, `planner`, `reviewer`, and `scout`:
+`examples/agents/` holds four personas to copy and edit — `general-purpose`, `planner`, `reviewer`, and `scout`:
 
 ```bash
 mkdir -p ~/.pi/agent/agents
@@ -106,17 +115,100 @@ With no publisher installed, or with a key nothing resolves, the bare value is p
 ```text
 ## Subagent guidance (subagent extension)
 
-### oracle
-Consult the oracle for code review and architecture feedback, ...
+### reviewer
+Hand the reviewer the full final review of a change before it ships ...
 ```
 
 - A `promote: true` persona with no `## When to use` section promotes nothing and still works normally.
 - With no promotable persona, nothing is appended — there is never a heading without a section under it.
 - Guidance is recomputed every turn, so it tracks the active mode with no reload.
 
-A persona whose `model` is a bare route key is promoted **only while that key resolves**. When a mode turns the route off, the persona is no longer advertised — otherwise the calling agent would be told to use something whose model cannot be resolved, and the child would die on it. The persona still stays in the `agent` enum and still runs when the caller names it explicitly; dispatch is not gated, because this extension cannot tell a route key from a model name the caller simply typed.
+A persona whose `model` is a bare route key is promoted **only while that key resolves**. When a mode turns the route off, the persona is no longer advertised — otherwise the calling agent would be told to use something whose model cannot be resolved, and the child would die on it. The persona still stays in the `agent` enum and still runs when the caller names it explicitly; dispatch is not gated, because this extension cannot tell a route key from a model name the caller simply typed. That inability cuts both ways: a persona meant to be promoted unconditionally needs a `model` containing a `/`, since a bare one is read as a route key and stays unadvertised until something resolves it. The shipped `reviewer` uses `anthropic/claude-sonnet-4-5` for exactly that reason.
+
+No shipped example exercises route-gated promotion any more: the `oracle` persona that used to demonstrate it became [a tool of its own](#oracle), since a second opinion is a model tier rather than a workflow, and putting both in one `agent` enum manufactured a choice between them. The rule stays correct for any persona that uses it.
 
 Promotion inherits the project-trust gate: untrusted project personas are not discovered at all, so a repo cannot promote text into your prompt. Note that promoted text is a stronger surface than the catalog line beside it — imperative rather than descriptive — so restricting promotion to user personas is a reasonable future tightening if repo-authored guidance proves noisy.
+
+## Oracle
+
+The oracle is defined by *who answers*, not by what it is asked. It carries no specialty and no output shape — only:
+
+- **a route**, `oracle`, resolved from [`model-modes`](../model-modes/README.md);
+- **a capability contract**: read-only (`read`, `grep`, `find`, `ls`), its own context window, deeper reasoning, higher cost and latency;
+- **an invocation policy**: advertised, never forced.
+
+| Parameter | Meaning |
+| --- | --- |
+| `question` | The question, passed to the child verbatim. The oracle sees nothing of your conversation, so state the problem in full and name the files it should read. |
+| `timeoutSeconds` | Wall-clock budget. Omitted, the run is unbounded. On expiry the child is terminated and its partial output is returned. |
+
+There is deliberately no `context` or `files` parameter: the oracle has read tools and the question can name paths, and a `context` parameter in particular invites dumping conversation history — the cost the separate context window exists to avoid. There is no `cwd` either: it was the only model-supplied input that changed the child's *prompt*, by selecting which `AGENTS.md` was appended, and dropping it costs no reach, since `read` applies no containment check and a question naming an absolute path still works. The tool list is fixed rather than configurable: read-only is part of what the oracle *is*.
+
+### The posture prompt
+
+The oracle replaces pi's base system prompt rather than appending to it:
+
+> You are being consulted for a second opinion by another coding agent. You have no history of its conversation; everything you need is in the question. You can read files but cannot edit, write, or run commands. Answer the question directly.
+
+Sending *no* prompt would not leave the model unprimed — it would leave it primed as pi's default coding agent, whose opening sentence tells the child it edits code and runs commands while it holds four read-only tools. Every sentence above states a fact about the run. Nothing names a subject, a task type, or an output shape; the test for anything added later is whether it could be false for some question the oracle is asked.
+
+`--no-skills` goes with it: a one-shot consultation has no use for the skills catalog, whose descriptions are repo-authored text that would reach the child for nothing.
+
+### What actually reaches the oracle child
+
+| Source | Reaches the child | Note |
+| --- | --- | --- |
+| Posture prompt | Yes | Extension source, four sentences |
+| The question | Yes | Verbatim, from the calling agent |
+| `AGENTS.md` / `CLAUDE.md` | **Yes** | Appended for any prompt mode, exactly as for a subagent run |
+| Skills catalog | No | Suppressed by `--no-skills` |
+| pi's coding-assistant framing | No | Replaced by `--system-prompt` |
+| Conversation history | No | Separate context is the point |
+| Persona bodies | No | The oracle has none |
+
+There is no project-trust gate on the oracle: `subagent` needs one because repo-controlled *persona* bodies and descriptions reach the model, and the oracle has no persona file. Context files still reach it, as they reach any child `pi` — not a gate the oracle removed, just not one it needs.
+
+### Configuration
+
+None of its own. Point the `oracle` route at a model in `model-modes.json`:
+
+```json
+{
+  "version": 1,
+  "defaultMode": "medium",
+  "defaultRoutes": {
+    "oracle": { "provider": "anthropic", "model": "claude-fable-5", "thinkingLevel": "high" }
+  },
+  "modes": [
+    { "id": "medium", "provider": "openai", "model": "gpt-5.6-sol", "thinkingLevel": "medium" },
+    { "id": "fable", "provider": "anthropic", "model": "claude-fable-5", "thinkingLevel": "high",
+      "routes": { "oracle": false } }
+  ]
+}
+```
+
+## Availability
+
+Each tool is advertised only while it can do anything:
+
+| Tool | Active while |
+| --- | --- |
+| `oracle` | the `oracle` route resolves |
+| `subagent` | at least one persona was discovered |
+
+A sync pass on `session_start`, `model_select`, `thinking_level_select`, and `turn_start` adds or removes each name from the active tool list. `turn_start` is the cheap catch-all: it covers `/mode` switches and config reloads without this extension needing to know which events `model-modes` recomputes on. There is no `unregisterTool`; active-list membership is the mechanism.
+
+The `subagent` row is what a fresh install notices: with no personas configured, the tool is simply not advertised, rather than advertised with a description telling the caller not to invoke it. It also answers the "oracle without subagent" case structurally — write no persona files and only the oracle is advertised.
+
+| Missing | Result |
+| --- | --- |
+| `model-modes` not installed | Nothing publishes, the route never resolves, `oracle` is never active |
+| Route absent or `false` for the active mode | `oracle` inactive for that mode, active again on switching back, no reload |
+| Route suppressed as redundant | Same as absent — a second opinion from the model already running is not one |
+| No personas configured | `subagent` inactive; `oracle` unaffected |
+| Neither personas nor route | Both inactive; the extension advertises nothing |
+
+Every direction produces silence rather than a dangling instruction. The route is read again at call time, so a `/mode` switch between the last sync and the call is seen: the oracle then returns an error naming the fix rather than dispatching to nothing.
 
 ## Resolved model display
 
@@ -138,11 +230,13 @@ For chain and parallel modes, each expanded step/task line shows its own resolve
 
 ## Testing
 
-The logic that does not need a running pi is split into pure modules with colocated tests: discovery, name matching, and the promoted-section split in `agents.ts`, the tool contract in `catalog.ts`, model selection and display in `model-display.ts`, route resolution in `routes.ts`, and promoted guidance in `promotion.ts`.
+The logic that does not need a running pi is split into pure modules with colocated tests: discovery, name matching, and the promoted-section split in `agents.ts`, the tool contract in `catalog.ts`, model selection and display in `model-display.ts`, route resolution in `routes.ts`, promoted guidance in `promotion.ts`, and the active-list rule in `availability.ts`.
 
 The `globalThis` route key is itself a clean test seam: `routes.test.ts` sets `__piModelRouteResolvers` directly, with no mocking machinery.
 
-`run.test.ts` covers termination — timeout, abort, and the partial result each returns. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated.
+`run.test.ts` covers the one child-process seam both tools reach the child through — timeout, abort, the partial result each returns, the dispatch arguments, and which of `--system-prompt` / `--append-system-prompt` a run gets. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated.
+
+`subagent-tool.test.ts` and `oracle-tool.test.ts` cover the composition each tool adds on top: persona lookup and the `Task:` framing for one, and for the other the load-bearing invariants that make the oracle what it is — the fixed read-only tool list, the posture prompt sent as replacing, `--no-skills`, the question passed through verbatim, no `cwd` parameter, and a missing route failing without attempting a run. The oracle's test injects `runAgent` at the same seam where the subagent's injects `spawnChild`.
 
 ```bash
 node --test pi/extensions/subagent/*.test.ts
