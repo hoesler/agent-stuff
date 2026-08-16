@@ -12,13 +12,42 @@
 import * as path from "node:path";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type AgentDiscoveryResult, discoverAgents } from "./agents.ts";
-import { createOracleTool } from "./oracle-tool.ts";
+import { nextActiveTools } from "./availability.ts";
+import { createOracleTool, ORACLE_TOOL_NAME } from "./oracle-tool.ts";
 import { formatPromotedGuidance } from "./promotion.ts";
-import { createSubagentTool } from "./subagent-tool.ts";
+import { ORACLE_ROUTE_KEY, resolveRoute } from "./routes.ts";
+import { createSubagentTool, SUBAGENT_TOOL_NAME } from "./subagent-tool.ts";
 
 /** Identity of a catalog, for deciding whether a re-registration is worthwhile. */
 function catalogFingerprint(result: AgentDiscoveryResult): string {
 	return result.agents.map((a) => `${a.source}:${a.name}:${a.description}`).join("|");
+}
+
+/**
+ * Bring the active tool list in line with what each tool can currently do:
+ * `oracle` while its route resolves, `subagent` while at least one persona was
+ * discovered. There is no `unregisterTool`; active-list membership is the
+ * mechanism.
+ *
+ * `getActiveTools`/`setActiveTools` live on `ExtensionAPI` (the `pi` handed to
+ * the entry point), not on the per-event `ExtensionContext` — so this takes
+ * `pi` directly rather than the `ctx` each handler also receives. Both tools
+ * are folded into one list before a single write, so neither can undo the
+ * other's decision.
+ */
+function syncAvailability(pi: ExtensionAPI, discovery: AgentDiscoveryResult): void {
+	let active = pi.getActiveTools();
+	let changed = false;
+	const apply = (name: string, available: boolean) => {
+		const next = nextActiveTools(name, available, active);
+		if (!next) return;
+		active = next;
+		changed = true;
+	};
+
+	apply(ORACLE_TOOL_NAME, resolveRoute(ORACLE_ROUTE_KEY) !== undefined);
+	apply(SUBAGENT_TOOL_NAME, discovery.agents.length > 0);
+	if (changed) pi.setActiveTools(active);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -46,11 +75,24 @@ export default function (pi: ExtensionAPI) {
 			includeProject: ctx.isProjectTrusted(),
 		});
 		const nextFingerprint = catalogFingerprint(next);
-		if (nextFingerprint === fingerprint) return;
-		discovery = next;
-		fingerprint = nextFingerprint;
-		pi.registerTool(createSubagentTool(discovery));
+		if (nextFingerprint !== fingerprint) {
+			discovery = next;
+			fingerprint = nextFingerprint;
+			// `registerTool` is keyed by tool name, so re-registering replaces the
+			// definition and refreshes the live tool list. Sync after it, never
+			// before: a re-registration can put the name back into the active list.
+			pi.registerTool(createSubagentTool(discovery));
+		}
+		syncAvailability(pi, discovery);
 	});
+
+	// `turn_start` is the cheap catch-all: it covers `/mode` switches and config
+	// reloads without this extension needing to know which events `model-modes`
+	// recomputes on, preserving the pull-not-push property that makes the whole
+	// route contract order-independent.
+	pi.on("model_select", () => syncAvailability(pi, discovery));
+	pi.on("thinking_level_select", () => syncAvailability(pi, discovery));
+	pi.on("turn_start", () => syncAvailability(pi, discovery));
 
 	/**
 	 * Per turn, not per session: a promoted persona's route can stop resolving
