@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveRoutes, routeModelString } from "./routes.ts";
+import { activeRoutes, describeRoutes, routeModelString } from "./routes.ts";
+import type { ActualSelection } from "./mode-state.ts";
 import type { ActiveMode, ModeConfig, ThinkingLevel } from "./types.ts";
+
+/** The two halves as consumers compose them: describe, then keep what resolves. */
+const resolveRoutes = (config: ModeConfig, active: ActiveMode, effective: ActualSelection) =>
+  activeRoutes(describeRoutes(config, active, effective));
 
 const fable = { provider: "anthropic", model: "claude-fable-5", thinkingLevel: "high" } as const;
 
@@ -72,6 +77,38 @@ test("does not suppress when only the thinking level differs", () => {
 test("returns nothing when no routes are configured", () => {
   const bare: ModeConfig = { version: 1, defaultMode: "medium", modes: [config.modes[1]!] };
   assert.deepEqual(resolveRoutes(bare, named("medium"), live("openai", "gpt-5.6-sol", "medium")), []);
+});
+
+test("describes a resolving route as active, with its model", () => {
+  assert.deepEqual(describeRoutes(config, named("high"), live("openai", "gpt-5.6-sol", "high")), [
+    { key: "oracle", state: "active", model: "google/gemini-4:max", description: "a different vantage point" },
+  ]);
+});
+
+test("describes a mode's opt-out as off", () => {
+  assert.deepEqual(describeRoutes(config, named("low"), live("zai", "glm-5.2", "low")), [
+    { key: "oracle", state: "off" },
+  ]);
+});
+
+test("describes a target equal to the live triple as redundant, naming the model", () => {
+  assert.deepEqual(describeRoutes(config, { kind: "custom" }, live("anthropic", "claude-fable-5", "high")), [
+    { key: "oracle", state: "redundant", model: "anthropic/claude-fable-5:high" },
+  ]);
+});
+
+test("describes a key configured only in another mode as unset", () => {
+  const elsewhere: ModeConfig = {
+    version: 1,
+    defaultMode: "medium",
+    modes: [
+      config.modes[1]!,
+      { ...config.modes[2]!, routes: { scout: { provider: "p", model: "m", thinkingLevel: "off" } } },
+    ],
+  };
+  assert.deepEqual(describeRoutes(elsewhere, named("medium"), live("openai", "gpt-5.6-sol", "medium")), [
+    { key: "scout", state: "unset" },
+  ]);
 });
 
 test("sorts keys so the catalog is stable across turns", () => {

@@ -1,6 +1,6 @@
 ---
 name: debugging-azure-container-apps
-description: Use when debugging any Azure Container App or Container App Job - restart loops, crashes, 503s, image pull failures, probe/health-check failures, failed job executions, a revision that broke after deploy - and for containers running a Functions image, where FunctionLoadError, WorkerInitError, "Host state changed to Error", MS_FUNCTION_LOGS entries, or functions 404ing after a deploy also apply. Also use when reaching Azure logs is itself the problem: InvalidTokenError, SignatureVerificationFailed, 401/403 against management.azure.com or api.loganalytics.io, missing bearer token in a sandbox, or an empty ContainerAppConsoleLogs result.
+description: Use when debugging any Azure Container App or Container App Job - restart loops, crashes, 503s, image pull failures, probe/health-check failures, failed job executions, a revision that broke after deploy - and for containers running a Functions image, where FunctionLoadError, WorkerInitError, "Host state changed to Error", MS_FUNCTION_LOGS entries, or functions 404ing after a deploy also apply. Also use when reaching Azure logs is itself the problem - InvalidTokenError, SignatureVerificationFailed, 401/403 against management.azure.com or api.loganalytics.io, missing bearer token in a sandbox, or an empty ContainerAppConsoleLogs result.
 ---
 
 # Debugging Azure Container Apps

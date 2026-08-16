@@ -60,7 +60,7 @@ If no configuration file exists yet, `/mode` and `/mode doctor` report **not con
 - `/mode <id>` — select a mode
 - `/mode next` — cycle forward
 - `/mode previous` — cycle backward
-- `/mode doctor` — validate config and model compatibility
+- `/mode doctor` — validate config and model compatibility, and report which routes resolve right now
 - `/mode init` — ask the current model to draft a starter configuration from your installed models
 - `/mode help` — show usage and resolved config path
 
@@ -222,3 +222,32 @@ and resolved late.
 - `OK` — configuration is valid and every mode's model is currently available.
 - `NOT_CONFIGURED` — no configuration file exists yet at the resolved path; run `/mode init` to draft one.
 - `INVALID` — a configuration file exists but failed validation, or references a missing/incompatible model; the issues list explains why.
+
+### The routes section
+
+`/mode doctor` reports every route key configured anywhere in the file, judged
+against the mode that is active *at that moment* — not the file's defaults:
+
+```text
+Routes (active mode: medium):
+- judge -> unavailable (openai/gpt-5.6-sol:high is the model already running)
+- oracle -> anthropic/claude-fable-5:high — A second opinion, deliberately different
+- scout -> unavailable (no target for this mode)
+```
+
+A key resolves or it says why it does not, in the terms of the thing you would
+change to fix it:
+
+| Line | Meaning |
+| --- | --- |
+| `-> <model>` | Resolves. This is the exact string a consumer is handed. |
+| `unavailable (this mode opts out)` | The active mode sets the key to `false`. |
+| `unavailable (<model> is the model already running)` | The redundancy rule: the target equals the live triple. |
+| `unavailable (no target for this mode)` | Configured in some other mode, with no `defaultRoutes` entry to inherit. |
+| `Routes: none configured` | Neither `defaultRoutes` nor any `modes[].routes` exists. |
+
+The report is rendered from the same resolution the publisher hands to
+consumers, narrowed by `activeRoutes` rather than recomputed, so the doctor
+cannot disagree with what a route key actually dispatches to. Nothing is
+reported for a config that failed to load: with no usable config there is no
+active mode to resolve against, and a routes section would be a guess.

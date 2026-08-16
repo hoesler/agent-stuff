@@ -7,6 +7,9 @@
 
 type ModelRouteResolver = (key: string) => string | undefined;
 
+/** The key the `oracle` tool reads. Fixed, so there is no `/` discrimination to do. */
+export const ORACLE_ROUTE_KEY = "oracle";
+
 /** First non-empty answer from any registered publisher, or `undefined`. */
 export function resolveRoute(key: string): string | undefined {
 	const g = globalThis as { __piModelRouteResolvers?: Set<ModelRouteResolver> };

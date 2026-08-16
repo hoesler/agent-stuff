@@ -187,6 +187,34 @@ test("doctor uses editor in TUI and console output in print mode", async () => {
   } finally { console.log = log; tui.restore(); print.restore(); }
 });
 
+const routedConfig = JSON.stringify({
+  version: 1,
+  defaultMode: "low",
+  defaultRoutes: { oracle: { provider: "test", model: "high", thinkingLevel: "high", description: "A second opinion" } },
+  modes: baseModes,
+});
+
+test("doctor reports the routes that resolve for the active mode", async () => {
+  const h = await harness({ configText: routedConfig });
+  try {
+    await h.commands.get("mode")!.handler("doctor", h.context);
+    const text = h.editors.at(-1)![1]!;
+    assert.match(text, /Routes \(active mode: low\):/);
+    assert.match(text, /- oracle -> test\/high:high — A second opinion/);
+  } finally { h.restore(); }
+});
+
+test("doctor tracks a mid-session mode switch rather than reporting the file's defaults", async () => {
+  const h = await harness({ configText: routedConfig });
+  try {
+    await h.commands.get("mode")!.handler("high", h.context);
+    await h.commands.get("mode")!.handler("doctor", h.context);
+    const text = h.editors.at(-1)![1]!;
+    assert.match(text, /Routes \(active mode: high\):/);
+    assert.match(text, /- oracle -> unavailable \(test\/high:high is the model already running\)/);
+  } finally { h.restore(); }
+});
+
 test("help includes resolved configuration path and all subcommands", async () => {
   const h = await harness();
   try {

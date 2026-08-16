@@ -12,8 +12,10 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
  *  - "frontmatter" the subagent persona's own `model:` frontmatter field
  *  - "pi-default"  no explicit model anywhere; the child Pi process chose
  *                   its own default
+ *  - "route"       a route key resolved it; nobody in this session named a
+ *                   model, so neither "agent" nor "frontmatter" would be true
  */
-export type ModelSource = "agent" | "frontmatter" | "pi-default";
+export type ModelSource = "agent" | "frontmatter" | "pi-default" | "route";
 
 export interface ModelSelection {
   /** The requested model string, if any explicit selection was made. */

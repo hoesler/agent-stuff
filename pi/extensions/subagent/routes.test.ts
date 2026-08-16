@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { resolveModelReference, resolveRoute } from "./routes.ts";
+import { ORACLE_ROUTE_KEY, resolveModelReference, resolveRoute } from "./routes.ts";
 
 type Resolver = (key: string) => string | undefined;
 const global = globalThis as { __piModelRouteResolvers?: Set<Resolver> };
@@ -47,6 +47,11 @@ test("a throwing publisher is skipped", () => {
 		() => "anthropic/claude-fable-5:high",
 	);
 	assert.equal(resolveRoute("oracle"), "anthropic/claude-fable-5:high");
+});
+
+test("the oracle route key is the one key the oracle tool reads", () => {
+	publish((key) => (key === ORACLE_ROUTE_KEY ? "anthropic/claude-fable-5:high" : undefined));
+	assert.equal(resolveRoute(ORACLE_ROUTE_KEY), "anthropic/claude-fable-5:high");
 });
 
 test("the first non-empty answer wins", () => {

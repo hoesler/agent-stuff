@@ -11,7 +11,7 @@ import { formatModeCatalog } from "./catalog.ts";
 import { ModeConfigLoader, resolveConfigPath } from "./config.ts";
 import { formatDoctorReport, formatModeList, inspectConfig } from "./doctor.ts";
 import { type ActualSelection, cycleOrder, hasExplicitModelSelection, inferActiveMode, isFreshSession } from "./mode-state.ts";
-import { type ResolvedRoute, resolveRoutes } from "./routes.ts";
+import { activeRoutes, describeRoutes, type ResolvedRoute, type RouteStatus } from "./routes.ts";
 import { registerModelRouteResolver } from "./routes-hook.ts";
 import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
@@ -26,7 +26,10 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   let active: ActiveMode = { kind: "error" };
   // Recomputed on every path that can change the active mode (see updateStatus).
   // Routes are read at dispatch time, so keeping this current is the whole of
-  // making a mid-session /mode change take effect.
+  // making a mid-session /mode change take effect. The doctor reads the full
+  // statuses and the resolver the narrowed view, so the report can never
+  // disagree with what consumers are actually handed.
+  let currentRouteStatuses: RouteStatus[] = [];
   let currentRoutes: ResolvedRoute[] = [];
   let applying = false;
   // Serialize cycle/activate calls so overlapping invocations (e.g. rapid
@@ -67,6 +70,9 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     (key) => currentRoutes.find((route) => route.key === key)?.model,
   );
 
+  /** What the status line and the doctor both call the active mode. */
+  const activeModeLabel = (): string => active.kind === "named" ? active.mode.id : active.kind;
+
   const asModeModel = (model: Model<Api>): ModeModel => ({
     provider: model.provider,
     id: model.id,
@@ -106,8 +112,9 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     };
     if (!snapshot.ok) active = { kind: "error" };
     else active = inferActiveMode(snapshot.config, effective);
-    currentRoutes = snapshot.ok ? resolveRoutes(snapshot.config, active, effective) : [];
-    const label = active.kind === "named" ? active.mode.id : active.kind;
+    currentRouteStatuses = snapshot.ok ? describeRoutes(snapshot.config, active, effective) : [];
+    currentRoutes = activeRoutes(currentRouteStatuses);
+    const label = activeModeLabel();
     const detail = active.kind !== "error" && effective.model ? ` (${effective.model} · thinking:${effective.thinkingLevel})` : "";
     ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
   };
@@ -232,7 +239,12 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   });
 
   const showDoctor = async (ctx: ExtensionContext): Promise<void> => {
-    const report = formatDoctorReport(inspectConfig(loader.current, doctorRegistry(ctx), registeredShortcut));
+    // `refresh` ran updateStatus before this dispatched, so the statuses below
+    // are this moment's, not the file's defaults.
+    const report = formatDoctorReport(inspectConfig(loader.current, doctorRegistry(ctx), registeredShortcut, {
+      activeMode: activeModeLabel(),
+      routes: currentRouteStatuses,
+    }));
     if (ctx.mode === "tui") await ctx.ui.editor("model-modes doctor", report);
     else console.log(report);
   };

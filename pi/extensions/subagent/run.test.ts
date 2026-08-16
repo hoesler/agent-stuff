@@ -1,29 +1,17 @@
 /**
- * Termination behaviour of a subagent run, exercised against real child
+ * Termination behaviour of an agent run, exercised against real child
  * processes: a run that is killed must still hand back what it produced.
+ * Both tools in this extension reach the child through this one seam.
  */
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { getEventListeners } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import type { AgentConfig } from "./agents.ts";
-import { runSingleAgent, type SpawnChild } from "./index.ts";
-
-const agents = [
-	{
-		name: "stub",
-		description: "Stub persona",
-		systemPrompt: "",
-		source: "user",
-		filePath: "/dev/null",
-	},
-] as AgentConfig[];
-
-const makeDetails = (results: unknown[]) => ({ mode: "single", projectAgentsDir: null, results }) as never;
+import { type SpawnChild, spawnAgentRun } from "./run.ts";
 
 /** A child that emits one assistant message, then hangs until it is killed. */
 const hangingChild: SpawnChild = () => {
@@ -48,12 +36,9 @@ const hangingChild: SpawnChild = () => {
 const quickChild: SpawnChild = () => spawn(process.execPath, ["-e", ""], { stdio: ["ignore", "pipe", "pipe"] });
 
 function run(overrides: Record<string, unknown>) {
-	return runSingleAgent({
-		defaultCwd: mkdtempSync(join(tmpdir(), "subagent-run-")),
-		agents,
-		agentName: "stub",
+	return spawnAgentRun({
 		task: "do a thing",
-		makeDetails,
+		cwd: mkdtempSync(join(tmpdir(), "agent-run-")),
 		...overrides,
 	});
 }
@@ -124,19 +109,93 @@ describe("abort", () => {
 	});
 });
 
-describe("unknown agent", () => {
-	test("fails without spawning anything, naming the closest match", async () => {
-		let spawned = false;
-		const result = await run({
-			agentName: "scowt",
-			spawnChild: (() => {
-				spawned = true;
+describe("dispatch arguments", () => {
+	test("omits --model and --tools when none are given, and never appends a system prompt", async () => {
+		let captured: string[] = [];
+		await run({
+			spawnChild: ((args: string[]) => {
+				captured = args;
 				return quickChild([], "");
 			}) as SpawnChild,
 		});
 
-		assert.equal(spawned, false);
-		assert.equal(result.exitCode, 1);
-		assert.match(result.stderr, /Unknown agent: "scowt"/);
+		assert.deepEqual(captured, ["--mode", "json", "-p", "--no-session", "do a thing"]);
+	});
+
+	test("passes the resolved model and tool list through verbatim", async () => {
+		let captured: string[] = [];
+		await run({
+			model: "anthropic/claude-fable-5:high",
+			tools: ["read", "grep", "find", "ls"],
+			spawnChild: ((args: string[]) => {
+				captured = args;
+				return quickChild([], "");
+			}) as SpawnChild,
+		});
+
+		assert.deepEqual(captured.slice(0, 8), [
+			"--mode",
+			"json",
+			"-p",
+			"--no-session",
+			"--model",
+			"anthropic/claude-fable-5:high",
+			"--tools",
+			"read,grep,find,ls",
+		]);
+	});
+});
+
+describe("system prompt", () => {
+	/** Captures the child's argv and the prompt file's contents before it is unlinked. */
+	function capturing(sink: { args: string[]; prompt?: string }): SpawnChild {
+		return (args) => {
+			sink.args = args;
+			for (const flag of ["--system-prompt", "--append-system-prompt"]) {
+				const i = args.indexOf(flag);
+				if (i >= 0) sink.prompt = readFileSync(args[i + 1], "utf-8");
+			}
+			return quickChild([], "");
+		};
+	}
+
+	test("an appending prompt stacks on pi's own framing", async () => {
+		const sink = { args: [] as string[] };
+		await run({ systemPrompt: "be terse", spawnChild: capturing(sink) });
+
+		assert.ok(sink.args.includes("--append-system-prompt"));
+		assert.ok(!sink.args.includes("--system-prompt"));
+	});
+
+	test("a replacing prompt replaces it, and its text reaches the child", async () => {
+		const sink = { args: [] as string[], prompt: undefined as string | undefined };
+		await run({ replaceSystemPrompt: "you are consulted", spawnChild: capturing(sink) });
+
+		assert.ok(sink.args.includes("--system-prompt"));
+		assert.ok(!sink.args.includes("--append-system-prompt"));
+		assert.equal(sink.prompt, "you are consulted");
+	});
+
+	test("supplying both is a programming error, not a silent choice", async () => {
+		await assert.rejects(
+			run({ systemPrompt: "a", replaceSystemPrompt: "b", spawnChild: quickChild }),
+			/systemPrompt and replaceSystemPrompt/,
+		);
+	});
+});
+
+describe("skills", () => {
+	test("--no-skills is passed only when asked for", async () => {
+		let captured: string[] = [];
+		const capture: SpawnChild = (args) => {
+			captured = args;
+			return quickChild([], "");
+		};
+
+		await run({ spawnChild: capture });
+		assert.ok(!captured.includes("--no-skills"));
+
+		await run({ noSkills: true, spawnChild: capture });
+		assert.ok(captured.includes("--no-skills"));
 	});
 });
