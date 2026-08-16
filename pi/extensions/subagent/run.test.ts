@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { getEventListeners } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -143,5 +143,59 @@ describe("dispatch arguments", () => {
 			"--tools",
 			"read,grep,find,ls",
 		]);
+	});
+});
+
+describe("system prompt", () => {
+	/** Captures the child's argv and the prompt file's contents before it is unlinked. */
+	function capturing(sink: { args: string[]; prompt?: string }): SpawnChild {
+		return (args) => {
+			sink.args = args;
+			for (const flag of ["--system-prompt", "--append-system-prompt"]) {
+				const i = args.indexOf(flag);
+				if (i >= 0) sink.prompt = readFileSync(args[i + 1], "utf-8");
+			}
+			return quickChild([], "");
+		};
+	}
+
+	test("an appending prompt stacks on pi's own framing", async () => {
+		const sink = { args: [] as string[] };
+		await run({ systemPrompt: "be terse", spawnChild: capturing(sink) });
+
+		assert.ok(sink.args.includes("--append-system-prompt"));
+		assert.ok(!sink.args.includes("--system-prompt"));
+	});
+
+	test("a replacing prompt replaces it, and its text reaches the child", async () => {
+		const sink = { args: [] as string[], prompt: undefined as string | undefined };
+		await run({ replaceSystemPrompt: "you are consulted", spawnChild: capturing(sink) });
+
+		assert.ok(sink.args.includes("--system-prompt"));
+		assert.ok(!sink.args.includes("--append-system-prompt"));
+		assert.equal(sink.prompt, "you are consulted");
+	});
+
+	test("supplying both is a programming error, not a silent choice", async () => {
+		await assert.rejects(
+			run({ systemPrompt: "a", replaceSystemPrompt: "b", spawnChild: quickChild }),
+			/systemPrompt and replaceSystemPrompt/,
+		);
+	});
+});
+
+describe("skills", () => {
+	test("--no-skills is passed only when asked for", async () => {
+		let captured: string[] = [];
+		const capture: SpawnChild = (args) => {
+			captured = args;
+			return quickChild([], "");
+		};
+
+		await run({ spawnChild: capture });
+		assert.ok(!captured.includes("--no-skills"));
+
+		await run({ noSkills: true, spawnChild: capture });
+		assert.ok(captured.includes("--no-skills"));
 	});
 });

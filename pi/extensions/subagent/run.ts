@@ -54,8 +54,21 @@ export interface AgentRunOptions {
 	/** Already resolved; no route logic happens here. */
 	model?: string;
 	tools?: string[];
-	/** Omitted or blank → no `--append-system-prompt`. */
+	/**
+	 * Stacked onto pi's base prompt via `--append-system-prompt`. For personas,
+	 * whose text adds a role to the coding-assistant framing rather than
+	 * contradicting it. Omitted or blank → no flag.
+	 */
 	systemPrompt?: string;
+	/**
+	 * Replaces pi's base prompt via `--system-prompt`. "No prompt" is not
+	 * neutral — it is pi's default coding agent, which tells the child it edits
+	 * code and runs commands — so a read-only child needs the replacing flag.
+	 * Mutually exclusive with `systemPrompt`.
+	 */
+	replaceSystemPrompt?: string;
+	/** Suppresses the skills catalog. A one-shot consultation has no use for it. */
+	noSkills?: boolean;
 	/** Names the temp prompt file, for readability while a run is in flight. */
 	promptName?: string;
 	/** The prompt handed to the child, verbatim. */
@@ -136,7 +149,14 @@ const spawnPi: SpawnChild = (args, cwd) => {
 };
 
 export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunResult> {
+	// A programming error, not a precedence question: the two flags contradict
+	// each other, and picking one silently would hide which prompt was in flight.
+	if (options.systemPrompt?.trim() && options.replaceSystemPrompt?.trim()) {
+		throw new Error("spawnAgentRun: systemPrompt and replaceSystemPrompt are mutually exclusive");
+	}
+
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	if (options.noSkills) args.push("--no-skills");
 	if (options.model) args.push("--model", options.model);
 	if (options.tools && options.tools.length > 0) args.push("--tools", options.tools.join(","));
 
@@ -153,11 +173,14 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 	const emitUpdate = () => options.onUpdate?.(result);
 
 	try {
-		if (options.systemPrompt?.trim()) {
-			const tmp = await writePromptToTempFile(options.promptName ?? "agent", options.systemPrompt);
+		const promptText = options.replaceSystemPrompt ?? options.systemPrompt;
+		if (promptText?.trim()) {
+			const tmp = await writePromptToTempFile(options.promptName ?? "agent", promptText);
 			tmpPromptDir = tmp.dir;
 			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
+			// `--system-prompt` and `--append-system-prompt` both accept a path or
+			// literal text; a file keeps a multi-paragraph prompt out of argv.
+			args.push(options.replaceSystemPrompt?.trim() ? "--system-prompt" : "--append-system-prompt", tmpPromptPath);
 		}
 
 		args.push(options.task);
