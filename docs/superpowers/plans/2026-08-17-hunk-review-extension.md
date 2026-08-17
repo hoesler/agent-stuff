@@ -1973,7 +1973,7 @@ import {
   type AddressedState,
 } from "./pending.ts";
 import { fixPrompt, reviewPrompt } from "./prompts.ts";
-import { ensureSession } from "./session.ts";
+import { ensureSession, type Resolution } from "./session.ts";
 import {
   smartDefaultValue,
   TARGET_PRESETS,
@@ -2123,13 +2123,14 @@ export default function hunkExtension(pi: ExtensionAPI) {
     );
   }
 
-  function reportUnresolved(ctx: ExtensionCommandContext, resolution: { kind: string; [key: string]: unknown }) {
+  /** Takes the non-session arms only, so the union stays discriminated. */
+  function reportUnresolved(ctx: ExtensionCommandContext, resolution: Exclude<Resolution, { kind: "session" }>) {
     if (resolution.kind === "ambiguous") {
-      const ids = (resolution.sessionIds as string[]).join(", ");
+      const ids = resolution.sessionIds.join(", ");
       ctx.ui.notify(`Several Hunk windows show this repository: ${ids}. Re-run with --session <id>.`, "warning");
       return;
     }
-    ctx.ui.notify(String(resolution.message), "warning");
+    ctx.ui.notify(resolution.message, "warning");
   }
 
   /** The same file `/review` reads, so guidelines written once apply to both. */
@@ -2144,7 +2145,10 @@ export default function hunkExtension(pi: ExtensionAPI) {
 
   async function startReview(ctx: ExtensionCommandContext, target: Target, sessionId: string | undefined) {
     const resolution = await resolve(ctx, target, sessionId);
-    if (resolution.kind !== "session") return reportUnresolved(ctx, resolution);
+    if (resolution.kind !== "session") {
+      reportUnresolved(ctx, resolution);
+      return;
+    }
     ctx.ui.notify(`Reviewing ${targetLabel(target)} in Hunk.`, "info");
     pi.sendUserMessage(
       reviewPrompt({
@@ -2155,23 +2159,38 @@ export default function hunkExtension(pi: ExtensionAPI) {
     );
   }
 
-  async function startFix(ctx: ExtensionCommandContext, sessionId: string | undefined, explicit: boolean) {
+  /**
+   * `undefined` means fix mode could not even look; `{ empty: true }` means it
+   * looked and found nothing new. Auto mode needs those apart: only the second
+   * should fall through to a review.
+   */
+  async function startFix(
+    ctx: ExtensionCommandContext,
+    sessionId: string | undefined,
+    explicit: boolean,
+  ): Promise<{ empty: boolean } | undefined> {
     const resolution = await resolve(ctx, undefined, sessionId);
-    if (resolution.kind !== "session") return reportUnresolved(ctx, resolution);
+    if (resolution.kind !== "session") {
+      if (explicit) reportUnresolved(ctx, resolution);
+      return undefined;
+    }
 
     const notes = await cliFor(ctx.cwd).listNotes(resolution.sessionId, "user");
-    if (!notes.ok) return ctx.ui.notify(notes.message, "error");
+    if (!notes.ok) {
+      ctx.ui.notify(notes.message, "error");
+      return undefined;
+    }
 
     const pending = pendingNotes(notes.value, restoreAddressed(ctx.sessionManager.getBranch()));
     if (pending.length === 0) {
       if (explicit) ctx.ui.notify("No new notes in the Hunk window.", "info");
-      return { empty: true } as const;
+      return { empty: true };
     }
 
     outstandingFix = { sessionId: resolution.sessionId, notes: pending, since: new Date().toISOString() };
     ctx.ui.notify(`Addressing ${pending.length} note${pending.length === 1 ? "" : "s"} from Hunk.`, "info");
     pi.sendUserMessage(fixPrompt({ sessionId: resolution.sessionId, notes: pending, author: config.noteAuthor }));
-    return { empty: false } as const;
+    return { empty: false };
   }
 
   /**
