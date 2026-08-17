@@ -1,5 +1,5 @@
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   DynamicBorder,
   getAgentDir,
@@ -243,18 +243,14 @@ export default function hunkExtension(pi: ExtensionAPI) {
   /**
    * Adopt the binary's own manual instead of documenting its CLI here, so the
    * agent's knowledge of Hunk tracks the installed version.
-   *
-   * NOTE: `dirname(path.value)` here is the brief's stated shape, on the
-   * assumption `hunk skill path` prints a file path inside the skill
-   * directory. This was not verified against a running `pi` instance per
-   * task instructions (interactive verification was explicitly out of
-   * scope for this task); if `/skills` does not list `hunk-review`, try
-   * `dirname(dirname(path.value))` instead, per the brief's Step 4.
    */
   pi.on("resources_discover", async () => {
     const path = await createCli({ exec, hunkBin: config.hunkBin, cwd: process.cwd() }).skillPath();
     if (!path.ok || !path.value) return {};
-    return { skillPaths: [dirname(path.value)] };
+    // pi's loader takes either a directory or a markdown file (core/skills.js),
+    // so the printed SKILL.md path goes in verbatim: exact, and it cannot pick
+    // up whatever else a future Hunk release ships alongside it.
+    return { skillPaths: [path.value] };
   });
 
   pi.on("session_start", async (_event, ctx) => {
