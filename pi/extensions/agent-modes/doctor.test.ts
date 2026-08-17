@@ -25,7 +25,7 @@ test("doctor reports source, order, shortcut reload, and missing models", () => 
     find: (provider, id) => provider === model.provider && id === model.id ? model : undefined,
     available: () => [model],
   }, "f8"));
-  assert.match(report, /Source: \/tmp\/modes\.json \(PI_MODEL_MODES_CONFIG\)/);
+  assert.match(report, /Source: \/tmp\/modes\.json \(PI_AGENT_MODES_CONFIG\)/);
   assert.match(report, /Default: high/);
   assert.match(report, /Cycle: high -> bad/);
   assert.match(report, /Shortcut: f9 \(reload required; registered: f8\)/);

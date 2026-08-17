@@ -25,7 +25,7 @@ export interface ConfigPathOptions {
 
 export function resolveConfigPath(options: ConfigPathOptions): string {
   const selected = options.envPath?.trim();
-  if (!selected) return join(options.agentDir, "model-modes.json");
+  if (!selected) return join(options.agentDir, "agent-modes.json");
   return isAbsolute(selected) ? selected : resolve(options.startupCwd, selected);
 }
 

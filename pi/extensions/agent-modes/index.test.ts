@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import modelModesExtension from "./index.ts";
+import agentModesExtension from "./index.ts";
 import type { ThinkingLevel } from "./types.ts";
 
 type Handler = (...args: any[]) => Promise<void> | void;
@@ -30,13 +30,13 @@ function model(id: string, reasoning = true): Model<Api> {
 }
 
 async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut?: string; available?: string[]; mode?: "tui" | "print"; configText?: string; missingFile?: boolean } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "model-modes-"));
+  const directory = await mkdtemp(join(tmpdir(), "agent-modes-"));
   const path = join(directory, "modes.json");
   if (!options.missingFile) {
     await writeFile(path, options.configText ?? JSON.stringify({ version: 1, defaultMode: options.defaultMode ?? "low", cycleShortcut: options.shortcut ?? "f8", modes: options.modes ?? baseModes }));
   }
-  const previousPath = process.env.PI_MODEL_MODES_CONFIG;
-  process.env.PI_MODEL_MODES_CONFIG = path;
+  const previousPath = process.env.PI_AGENT_MODES_CONFIG;
+  process.env.PI_AGENT_MODES_CONFIG = path;
   const commands = new Map<string, { handler: Handler }>();
   const shortcuts = new Map<string, { handler: Handler }>();
   const events = new Map<string, Handler>();
@@ -77,8 +77,8 @@ async function harness(options: { modes?: Mode[]; defaultMode?: string; shortcut
       return accepted;
     },
   } as unknown as ExtensionAPI;
-  await modelModesExtension(api);
-  const restore = () => { if (previousPath === undefined) delete process.env.PI_MODEL_MODES_CONFIG; else process.env.PI_MODEL_MODES_CONFIG = previousPath; };
+  await agentModesExtension(api);
+  const restore = () => { if (previousPath === undefined) delete process.env.PI_AGENT_MODES_CONFIG; else process.env.PI_AGENT_MODES_CONFIG = previousPath; };
   return { path, commands, shortcuts, events, context, models, notifications, statuses, editors, userMessages, get thinking() { return thinking; }, get current() { return current; }, setModel: (fn: (target: Model<Api>) => Promise<boolean>) => { setModelBehavior = fn; }, setThinkingBehavior: (fn: (level: ThinkingLevel) => void) => { setThinking = fn; }, setThinking: (level: ThinkingLevel) => { thinking = level; }, customCalls: () => customCalls, restore };
 }
 
@@ -182,8 +182,8 @@ test("doctor uses editor in TUI and console output in print mode", async () => {
   try {
     await tui.commands.get("mode")!.handler("doctor", tui.context);
     await print.commands.get("mode")!.handler("doctor", print.context);
-    assert.equal(tui.editors[0]?.[0], "model-modes doctor");
-    assert.match(lines[0]!, /model-modes doctor/);
+    assert.equal(tui.editors[0]?.[0], "agent-modes doctor");
+    assert.match(lines[0]!, /agent-modes doctor/);
   } finally { console.log = log; tui.restore(); print.restore(); }
 });
 
@@ -358,7 +358,7 @@ test("before_agent_start appends the mode catalog when exposeCatalogInSystemProm
   });
   try {
     const result = await h.events.get("before_agent_start")!({ prompt: "hi", systemPrompt: "base prompt" }, h.context) as unknown as { systemPrompt: string };
-    assert.match(result.systemPrompt, /^base prompt\n\n## Available model modes/);
+    assert.match(result.systemPrompt, /^base prompt\n\n## Available agent modes/);
     assert.match(result.systemPrompt, /`low` → `test\/low:low`/);
     assert.match(result.systemPrompt, /`high` → `test\/high:high` — Careful/);
   } finally { h.restore(); }

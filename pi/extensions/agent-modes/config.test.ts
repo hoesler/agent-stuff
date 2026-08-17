@@ -36,7 +36,7 @@ test("environment config path overrides the global path", () => {
   );
   assert.equal(
     resolveConfigPath({ envPath: "  ", startupCwd: "/repo", agentDir: "/agent" }),
-    "/agent/model-modes.json",
+    "/agent/agent-modes.json",
   );
 });
 
@@ -96,7 +96,7 @@ test("exposeCatalogInSystemPrompt defaults to absent and can be enabled", () => 
 });
 
 test("loader disables stale config and recovers after the file is fixed", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "model-modes-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-modes-"));
   const path = join(dir, "modes.json");
   try {
     await writeFile(path, JSON.stringify(valid));
@@ -119,7 +119,7 @@ test("loader disables stale config and recovers after the file is fixed", async 
 });
 
 test("loader reports missing files and invalid JSON at root", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "model-modes-"));
+  const dir = await mkdtemp(join(tmpdir(), "agent-modes-"));
   const path = join(dir, "modes.json");
   try {
     const loader = new ModeConfigLoader(path, false);

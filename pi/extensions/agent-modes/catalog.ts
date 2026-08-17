@@ -2,7 +2,7 @@ import type { ResolvedRoute } from "./routes.ts";
 import type { ModeConfig, ModeDefinition } from "./types.ts";
 
 const INTRO = [
-  "## Available model modes (model-modes extension)",
+  "## Available agent modes (agent-modes extension)",
   "",
   "When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass one of these exact strings — including the `:level` suffix — to pin both the model and its thinking level for that task:",
   "",

@@ -101,9 +101,9 @@ function formatRouteLine(status: RouteStatus): string {
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines = [
-    "model-modes doctor",
+    "agent-modes doctor",
     `Status: ${report.status}`,
-    `Source: ${report.source}${report.fromEnvironment ? " (PI_MODEL_MODES_CONFIG)" : ""}`,
+    `Source: ${report.source}${report.fromEnvironment ? " (PI_AGENT_MODES_CONFIG)" : ""}`,
   ];
   if (report.defaultMode) lines.push(`Default: ${report.defaultMode}`);
   if (report.cycle) lines.push(`Cycle: ${report.cycle.join(" -> ")}`);
