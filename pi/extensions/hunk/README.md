@@ -7,6 +7,7 @@
 | Command | Meaning |
 | --- | --- |
 | `/hunk` | Auto mode: try to address pending notes in an open Hunk window, or if none, prompt to pick a changeset and review it. |
+| `/hunk <target>` | Review mode with a specific target: same as `/hunk review <target>`. |
 | `/hunk review` | Review mode: pick a changeset and review it, opening or reloading a Hunk window. |
 | `/hunk review <target>` | Review mode with a specific target: `diff`, `diff --staged`, `diff <branch>...HEAD`, `show <commit>`, or any other Hunk argument. |
 | `/hunk fix` | Fix mode: collect notes left in the Hunk window and address each one. |
@@ -22,12 +23,12 @@ The addressed set lives in the session only. Closing and relaunching Hunk makes 
 
 ## Auto mode behavior
 
-Bare `/hunk` (or `/hunk <target>`) runs in auto mode:
+Bare `/hunk` (with no arguments at all) runs in auto mode:
 
 1. It tries to collect pending notes from the live Hunk window and address them.
-2. If there are no pending notes, or if there is no window open, it proceeds to review mode and picks or reloads a changeset.
+2. If there are no pending notes, or if there is no window open, it proceeds to review mode and prompts you to pick a changeset.
 
-This means `/hunk` can mean either "fix the notes I left" or "review this target" depending on what is live — the agent decides by trying fix first.
+This means `/hunk` can mean either "fix the notes I left" or "review a changeset" depending on what is live — the agent decides by trying fix first. Providing a target (e.g., `/hunk <target>`) skips auto mode and goes straight to review mode.
 
 ## Configuration
 
