@@ -335,8 +335,16 @@ function catalogFingerprint(result: AgentDiscoveryResult): string {
  * Build the tool definition for one catalog snapshot. Re-invoked whenever
  * discovery changes: `registerTool` is keyed by tool name, so re-registering
  * replaces the definition and refreshes the live tool list.
+ *
+ * `deps.spawnChild` is the same seam `run.ts` documents and `runSingleAgent`
+ * already takes, lifted to the factory so the orchestration around them — mode
+ * selection, the trust gate, `{previous}` substitution, timeout precedence —
+ * can be exercised without a running pi. Production passes nothing.
  */
-export function createSubagentTool(discovery: AgentDiscoveryResult): ToolDefinition<TSchema, SubagentDetails> {
+export function createSubagentTool(
+	discovery: AgentDiscoveryResult,
+	deps: { spawnChild?: SpawnChild } = {},
+): ToolDefinition<TSchema, SubagentDetails> {
 	const agents = discovery.agents;
 
 	return {
@@ -440,6 +448,7 @@ export function createSubagentTool(discovery: AgentDiscoveryResult): ToolDefinit
 						taskModel: step.model,
 						globalModel: params.model,
 						timeoutSeconds: step.timeoutSeconds ?? params.timeoutSeconds,
+						spawnChild: deps.spawnChild,
 					});
 					results.push(result);
 
@@ -527,6 +536,7 @@ export function createSubagentTool(discovery: AgentDiscoveryResult): ToolDefinit
 						taskModel: t.model,
 						globalModel: params.model,
 						timeoutSeconds: t.timeoutSeconds ?? params.timeoutSeconds,
+						spawnChild: deps.spawnChild,
 					});
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -568,6 +578,7 @@ export function createSubagentTool(discovery: AgentDiscoveryResult): ToolDefinit
 					makeDetails: makeDetails("single"),
 					globalModel: params.model,
 					timeoutSeconds: params.timeoutSeconds,
+					spawnChild: deps.spawnChild,
 				});
 				const isError = isFailedResult(result);
 				if (isError) {

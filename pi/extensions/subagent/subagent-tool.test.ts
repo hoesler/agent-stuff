@@ -1,7 +1,7 @@
 /**
- * Persona lookup and persona dispatch — the half of a subagent run that is not
- * the child process. Termination and partial results are covered in
- * `run.test.ts`.
+ * Persona lookup, persona dispatch, and the orchestration `execute` wraps
+ * around them — the half of a subagent run that is not the child process.
+ * Termination and partial results are covered in `run.test.ts`.
  */
 
 import assert from "node:assert/strict";
@@ -10,8 +10,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import type { AgentConfig } from "./agents.ts";
-import { runSingleAgent, type SpawnChild } from "./subagent-tool.ts";
+import type { AgentConfig, AgentDiscoveryResult } from "./agents.ts";
+import { createSubagentTool, runSingleAgent, type SpawnChild } from "./subagent-tool.ts";
 
 const agents = [
 	{
@@ -168,5 +168,200 @@ describe("model given as a bare thinking level", () => {
 		} finally {
 			g.__piModelRouteResolvers?.delete(resolver);
 		}
+	});
+});
+
+/**
+ * `execute`'s own orchestration, reached through the `spawnChild` seam so the
+ * real persona lookup and model precedence stay in the path. Everything here
+ * runs between the tool call and `runSingleAgent`, and nothing else asserts it.
+ */
+describe("execute", () => {
+	/** A child that emits one assistant message carrying `text`, then exits. */
+	const emittingChild = (text: string) => {
+		const message = {
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text }], provider: "stub", model: "stub-model" },
+		};
+		return spawn(process.execPath, ["-e", `console.log(${JSON.stringify(JSON.stringify(message))})`], {
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	};
+
+	/** Records the task each child was handed, and replies with a scripted output. */
+	function children(...outputs: string[]) {
+		const tasks: string[] = [];
+		const spawnChild: SpawnChild = (args) => {
+			const text = outputs[tasks.length] ?? "";
+			tasks.push(args.at(-1) ?? "");
+			return emittingChild(text);
+		};
+		return { tasks, spawnChild };
+	}
+
+	const discovery = (...configs: AgentConfig[]): AgentDiscoveryResult => ({
+		agents: configs.length > 0 ? configs : agents,
+		projectAgentsDir: "/repo/.pi/agents",
+		projectAgentsSkipped: false,
+	});
+
+	const projectAgent = (name: string): AgentConfig =>
+		({ ...agents[0], name, source: "project" }) as AgentConfig;
+
+	const cwd = mkdtempSync(join(tmpdir(), "subagent-exec-"));
+
+	/** A ctx with no UI, so the trust gate does not apply. */
+	const headless = { cwd, hasUI: false };
+
+	function execute(result: AgentDiscoveryResult, params: unknown, ctx: unknown, spawnChild?: SpawnChild) {
+		return createSubagentTool(result, { spawnChild }).execute(
+			"call-id",
+			params as never,
+			new AbortController().signal,
+			undefined,
+			ctx as never,
+		);
+	}
+
+	describe("chain", () => {
+		test("substitutes the prior step's output into the next step's task", async () => {
+			const { tasks, spawnChild } = children("the first answer");
+			await execute(
+				discovery(),
+				{
+					chain: [
+						{ agent: "stub", task: "start" },
+						{ agent: "stub", task: "continue from {previous}" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.equal(tasks[1], "Task: continue from the first answer");
+		});
+
+		test("treats the prior output as text, never as a replacement pattern", async () => {
+			// `$&` in a string replacement expands to the matched substring, so a
+			// step whose output contains one would corrupt the next step's prompt.
+			const { tasks, spawnChild } = children("costs $& and $1");
+			await execute(
+				discovery(),
+				{
+					chain: [
+						{ agent: "stub", task: "start" },
+						{ agent: "stub", task: "report {previous}" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.equal(tasks[1], "Task: report costs $& and $1");
+		});
+
+		test("substitutes every occurrence, not just the first", async () => {
+			const { tasks, spawnChild } = children("X");
+			await execute(
+				discovery(),
+				{
+					chain: [
+						{ agent: "stub", task: "start" },
+						{ agent: "stub", task: "{previous} then {previous}" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.equal(tasks[1], "Task: X then X");
+		});
+	});
+
+	describe("project-agent trust gate", () => {
+		/** A ctx whose confirmation always answers `approved`, recording the prompts. */
+		function ui(approved: boolean) {
+			const prompts: string[] = [];
+			const ctx = {
+				cwd,
+				hasUI: true,
+				ui: {
+					confirm: async (_title: string, body: string) => {
+						prompts.push(body);
+						return approved;
+					},
+				},
+			};
+			return { prompts, ctx };
+		}
+
+		test("a declined confirmation spawns nothing", async () => {
+			const { ctx } = ui(false);
+			const { tasks, spawnChild } = children("never runs");
+			const result = await execute(
+				discovery(projectAgent("repo-agent")),
+				{ agent: "repo-agent", task: "do a thing" },
+				ctx,
+				spawnChild,
+			);
+
+			assert.deepEqual(tasks, []);
+			assert.match((result.content[0] as { text: string }).text, /Canceled: project-local agents not approved/);
+		});
+
+		test("an approved confirmation lets the run proceed", async () => {
+			const { ctx } = ui(true);
+			const { tasks, spawnChild } = children("done");
+			await execute(
+				discovery(projectAgent("repo-agent")),
+				{ agent: "repo-agent", task: "do a thing" },
+				ctx,
+				spawnChild,
+			);
+
+			assert.deepEqual(tasks, ["Task: do a thing"]);
+		});
+
+		test("a user-owned persona is never gated", async () => {
+			const { prompts, ctx } = ui(false);
+			const { tasks, spawnChild } = children("done");
+			await execute(discovery(), { agent: "stub", task: "do a thing" }, ctx, spawnChild);
+
+			assert.deepEqual(prompts, []);
+			assert.deepEqual(tasks, ["Task: do a thing"]);
+		});
+
+		test("one confirmation names every project persona the call would run", async () => {
+			const { prompts, ctx } = ui(false);
+			const { spawnChild } = children();
+			await execute(
+				discovery(projectAgent("one"), projectAgent("two"), agents[0]),
+				{
+					chain: [
+						{ agent: "one", task: "a" },
+						{ agent: "stub", task: "b" },
+						{ agent: "two", task: "c" },
+					],
+				},
+				ctx,
+				spawnChild,
+			);
+
+			assert.equal(prompts.length, 1);
+			assert.match(prompts[0], /Agents: one, two/);
+			assert.match(prompts[0], /Source: \/repo\/\.pi\/agents/);
+		});
+
+		test("a headless run is not gated, since there is nobody to ask", async () => {
+			const { tasks, spawnChild } = children("done");
+			await execute(
+				discovery(projectAgent("repo-agent")),
+				{ agent: "repo-agent", task: "do a thing" },
+				headless,
+				spawnChild,
+			);
+
+			assert.deepEqual(tasks, ["Task: do a thing"]);
+		});
 	});
 });
