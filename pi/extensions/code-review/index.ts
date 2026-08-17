@@ -278,6 +278,31 @@ Provide your findings in a clear, structured format:
 
 Output all findings the author would fix if they knew about them. If there are no qualifying findings, explicitly state the code looks good. Don't stop at the first finding - list every qualifying issue. Then append the required non-blocking callouts section.`;
 
+/**
+ * The id of a live Hunk window showing this repository, if there is one.
+ *
+ * Deliberately duplicated rather than imported from the `hunk` extension: a
+ * shared module would couple two extensions the user can enable separately,
+ * and this is one probe against a documented, stable JSON shape. When Hunk is
+ * absent, `/review` behaves exactly as it did before.
+ */
+async function findHunkSession(pi: ExtensionAPI, cwd: string): Promise<string | undefined> {
+	const root = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
+	if (root.code !== 0) return undefined;
+	const listed = await pi.exec("hunk", ["session", "list", "--json"], { cwd });
+	if (listed.code !== 0) return undefined;
+	try {
+		const parsed = JSON.parse(listed.stdout) as { sessions?: Array<{ sessionId?: string; repoRoot?: string }> };
+		const wanted = root.stdout.trim();
+		for (const session of parsed.sessions ?? []) {
+			if (session.sessionId && session.repoRoot === wanted) return session.sessionId;
+		}
+	} catch {
+		return undefined;
+	}
+	return undefined;
+}
+
 async function loadProjectReviewGuidelines(cwd: string): Promise<string | null> {
 	let currentDir = path.resolve(cwd);
 
@@ -1436,6 +1461,11 @@ export default function reviewExtension(pi: ExtensionAPI) {
 
 		if (projectGuidelines) {
 			fullPrompt += `\n\nThis project has additional instructions for code reviews:\n\n${projectGuidelines}`;
+		}
+
+		const hunkSessionId = await findHunkSession(pi, ctx.cwd);
+		if (hunkSessionId) {
+			fullPrompt += `\n\nA Hunk review window is open on this repository (session \`${hunkSessionId}\`). As well as reporting findings here, leave each one as an inline note in that window with \`hunk session comment apply\`, anchored to the file and line it is about, so the findings land where the code is. Do not annotate every hunk, and never remove a note the user wrote.`;
 		}
 
 		const modeHint = useFreshSession ? " (fresh session)" : "";
