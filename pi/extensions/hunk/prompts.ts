@@ -1,14 +1,14 @@
 import type { HunkNote } from "./types.ts";
 
 /**
- * Prompts name commands as intent, never as flag-level syntax. Hunk's own
- * bundled skill is adopted at startup and documents the flags; duplicating them
- * here would drift on every Hunk release.
+ * Where a note hangs, in prose. Deliberately not spelled as `--new-line 42`:
+ * the anchor is data the agent needs, the flag that carries it is Hunk's to
+ * name, and a work list full of renamed flags is worse than one the agent
+ * translates itself using the adopted skill.
  */
 function anchor(note: HunkNote): string {
   if (note.line === undefined) return note.filePath;
-  const flag = note.side === "old" ? "--old-line" : "--new-line";
-  return `${note.filePath} ${flag} ${note.line}`;
+  return `${note.filePath} line ${note.line} (${note.side} side)`;
 }
 
 export function renderWorkList(notes: HunkNote[]): string {
@@ -27,7 +27,7 @@ export function reviewPrompt(options: {
     "",
     "Work through the Hunk session commands, not the interactive TUI:",
     "",
-    "1. Read the file and hunk structure first with `session review --json`. It omits patch text on purpose.",
+    "1. Read the file and hunk structure first with `session review` in its structured form; it omits patch text on purpose.",
     "2. Pull raw diff text only for the files you actually need to read closely.",
     "3. Leave your findings as inline notes in one `comment apply` batch, each anchored to the file and line it is about.",
     "4. Navigate to the first note so the user lands where the review starts.",
@@ -47,7 +47,7 @@ export function fixPrompt(options: { sessionId: string; notes: HunkNote[]; autho
     "",
     renderWorkList(options.notes),
     "",
-    "For each one: make the change, then reply on the same file and line with `comment add`, using",
+    "For each one: make the change, then reply on the same file, side, and line with `comment add`, using",
     `\`--author ${options.author}\`, saying what you changed. The reply is how the user sees which notes you handled without rereading the diff.`,
     "",
     "Never remove or clear the user's notes — no `comment rm`, no `comment clear`. They decide when a note is done.",
