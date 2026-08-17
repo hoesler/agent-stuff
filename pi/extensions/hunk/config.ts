@@ -56,7 +56,7 @@ function spawnMode(value: unknown, path: string, fallback: SpawnMode): SpawnMode
 }
 
 /** Throws on the first problem, naming the exact key. Callers collect. */
-export function parseConfig(raw: unknown, path: string): HunkConfig {
+export function parseConfig(raw: unknown, path: string, base: HunkConfig = defaultConfig()): HunkConfig {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`${path}: expected object`);
   }
@@ -64,7 +64,6 @@ export function parseConfig(raw: unknown, path: string): HunkConfig {
   for (const key of Object.keys(input)) {
     if (!ROOT_KEYS.has(key)) throw new Error(`${path}.${key}: unknown property`);
   }
-  const base = defaultConfig();
   return {
     version: 1,
     hunkBin: nonEmptyString(input.hunkBin, `${path}.hunkBin`, base.hunkBin),
@@ -90,8 +89,7 @@ export async function loadConfig(options: ConfigPathOptions): Promise<ConfigSnap
       continue;
     }
     try {
-      const parsed = parseConfig(JSON.parse(text) as unknown, path);
-      config = { ...config, ...parsed };
+      config = parseConfig(JSON.parse(text) as unknown, path, config);
     } catch (error) {
       errors.push({ path, message: error instanceof Error ? error.message : String(error) });
     }

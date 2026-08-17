@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -86,4 +86,25 @@ test("a malformed file reports the error and still yields a usable config", asyn
   });
   assert.equal(snapshot.errors.length, 1);
   assert.equal(snapshot.config.spawn, "ghostty");
+});
+
+test("later config files override only the keys they name, preserving earlier keys", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "hunk-config-"));
+  const projectDir = mkdtempSync(join(tmpdir(), "hunk-config-"));
+  writeFileSync(join(agentDir, "hunk.json"), JSON.stringify({ spawn: "never" }));
+  const piDir = join(projectDir, ".pi");
+  mkdirSync(piDir, { recursive: true });
+  writeFileSync(join(piDir, "hunk.json"), JSON.stringify({ noteAuthor: "reviewer" }));
+  const snapshot = await loadConfig({
+    envPath: undefined,
+    startupCwd: projectDir,
+    agentDir: agentDir,
+    projectTrusted: true,
+  });
+  assert.deepEqual(snapshot.config, {
+    version: 1,
+    hunkBin: "hunk",
+    spawn: "never",
+    noteAuthor: "reviewer",
+  });
 });
