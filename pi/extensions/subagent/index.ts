@@ -87,7 +87,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// `turn_start` is the cheap catch-all: it covers `/mode` switches and config
-	// reloads without this extension needing to know which events `model-modes`
+	// reloads without this extension needing to know which events `agent-modes`
 	// recomputes on, preserving the pull-not-push property that makes the whole
 	// route contract order-independent.
 	pi.on("model_select", () => syncAvailability(pi, discovery));

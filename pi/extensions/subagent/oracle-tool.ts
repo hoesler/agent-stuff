@@ -3,7 +3,7 @@
  *
  * The oracle is defined by *who answers*, not by what it is asked: no
  * specialty, no output shape, no subject. All it is, is the `oracle` route
- * (published by `model-modes`), a fixed read-only tool list, a posture prompt
+ * (published by `agent-modes`), a fixed read-only tool list, a posture prompt
  * that states only facts about the run, and the caller's question verbatim.
  *
  * It is a tool rather than a `subagent` persona so that the calling agent never
@@ -69,7 +69,7 @@ const QUESTION_DESCRIPTION =
 	"The oracle runs on a different model in a fresh context and sees nothing of this conversation. State the problem in full and name the files it should read.";
 
 const NO_ROUTE_ERROR =
-	"No oracle route for the active mode. Set `defaultRoutes.oracle` or `modes[].routes.oracle` in model-modes.json.";
+	"No oracle route for the active mode. Set `defaultRoutes.oracle` or `modes[].routes.oracle` in agent-modes.json.";
 
 interface OracleParams {
 	question: string;

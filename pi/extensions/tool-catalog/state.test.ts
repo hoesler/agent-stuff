@@ -19,7 +19,7 @@ test("the last saved overrides in the branch win", () => {
 });
 
 test("other extensions' custom entries are ignored", () => {
-	const entries: BranchEntry[] = [{ type: "custom", customType: "model-modes", data: { overrides: { read: "off" } } }];
+	const entries: BranchEntry[] = [{ type: "custom", customType: "agent-modes", data: { overrides: { read: "off" } } }];
 
 	assert.equal(restoreOverrides(entries).size, 0);
 });

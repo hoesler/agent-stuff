@@ -102,7 +102,7 @@ Wherever a model value is accepted — the `model` parameter, `subagent.model`, 
 
 Route resolution is not a fifth level in the precedence list above. It is one step applied to whichever value won, so a key works wherever a model string does.
 
-Keys are resolved at dispatch time through an optional, dependency-free contract: a shared `Set` of resolver functions on `globalThis.__piModelRouteResolvers`, published by [`model-modes`](../model-modes/README.md) from its per-mode `defaultRoutes` / `modes[].routes` table. The first non-empty answer wins; a resolver that throws is skipped.
+Keys are resolved at dispatch time through an optional, dependency-free contract: a shared `Set` of resolver functions on `globalThis.__piModelRouteResolvers`, published by [`agent-modes`](../agent-modes/README.md) from its per-mode `defaultRoutes` / `modes[].routes` table. The first non-empty answer wins; a resolver that throws is skipped.
 
 Resolving late is the point. A key like `oracle` can mean a different model in each mode, so the answer is read at the moment the child is spawned rather than baked into a system prompt that may predate the current `/mode`.
 
@@ -151,7 +151,7 @@ Promotion inherits the project-trust gate: untrusted project personas are not di
 
 The oracle is defined by *who answers*, not by what it is asked. It carries no specialty and no output shape — only:
 
-- **a route**, `oracle`, resolved from [`model-modes`](../model-modes/README.md);
+- **a route**, `oracle`, resolved from [`agent-modes`](../agent-modes/README.md);
 - **a capability contract**: read-only (`read`, `grep`, `find`, `ls`), its own context window, deeper reasoning, higher cost and latency;
 - **an invocation policy**: advertised, never forced.
 
@@ -188,7 +188,7 @@ There is no project-trust gate on the oracle: `subagent` needs one because repo-
 
 ### Configuration
 
-None of its own. Point the `oracle` route at a model in `model-modes.json`:
+None of its own. Point the `oracle` route at a model in `agent-modes.json`:
 
 ```json
 {
@@ -226,13 +226,13 @@ Each tool is advertised only while it can do anything:
 | `oracle` | the `oracle` route resolves |
 | `subagent` | at least one persona was discovered |
 
-A sync pass on `session_start`, `model_select`, `thinking_level_select`, and `turn_start` adds or removes each name from the active tool list. `turn_start` is the cheap catch-all: it covers `/mode` switches and config reloads without this extension needing to know which events `model-modes` recomputes on. There is no `unregisterTool`; active-list membership is the mechanism.
+A sync pass on `session_start`, `model_select`, `thinking_level_select`, and `turn_start` adds or removes each name from the active tool list. `turn_start` is the cheap catch-all: it covers `/mode` switches and config reloads without this extension needing to know which events `agent-modes` recomputes on. There is no `unregisterTool`; active-list membership is the mechanism.
 
 The `subagent` row is what a fresh install notices: with no personas configured, the tool is simply not advertised, rather than advertised with a description telling the caller not to invoke it. It also answers the "oracle without subagent" case structurally — write no persona files and only the oracle is advertised.
 
 | Missing | Result |
 | --- | --- |
-| `model-modes` not installed | Nothing publishes, the route never resolves, `oracle` is never active |
+| `agent-modes` not installed | Nothing publishes, the route never resolves, `oracle` is never active |
 | Route absent or `false` for the active mode | `oracle` inactive for that mode, active again on switching back, no reload |
 | Route suppressed as redundant | Same as absent — a second opinion from the model already running is not one |
 | No personas configured | `subagent` inactive; `oracle` unaffected |
@@ -240,17 +240,17 @@ The `subagent` row is what a fresh install notices: with no personas configured,
 
 Every direction produces silence rather than a dangling instruction. The route is read again at call time, so a `/mode` switch between the last sync and the call is seen: the oracle then returns an error naming the fix rather than dispatching to nothing.
 
-Silence is the correct behavior and an awkward thing to debug, which is what the routes section of `/mode doctor` is for: the tool list shows only that the oracle is absent, while the report separates "this mode opts out" from "suppressed as redundant" from "configured, but only for another mode". The first row is the one case the report cannot explain — with no `model-modes` installed there is no `/mode` command to run.
+Silence is the correct behavior and an awkward thing to debug, which is what the routes section of `/mode doctor` is for: the tool list shows only that the oracle is absent, while the report separates "this mode opts out" from "suppressed as redundant" from "configured, but only for another mode". The first row is the one case the report cannot explain — with no `agent-modes` installed there is no `/mode` command to run.
 
 ## Resolved model display
 
-The displayed model is the one the child process actually used, not the raw value that was requested — so aliases or mode-like values (e.g. `ultra` from a model-modes catalog) never appear as though they were the real model name.
+The displayed model is the one the child process actually used, not the raw value that was requested — so aliases or mode-like values (e.g. `ultra` from an agent-modes catalog) never appear as though they were the real model name.
 
 The resolved model is read from the child's assistant message: `provider/responseModel` when the provider reports a response model, otherwise `provider/model`. Only once that message arrives does the display switch from the requested value to the resolved one.
 
 If the child process never produces an assistant message (e.g. it crashes or is aborted immediately), the display falls back to the originally requested model (if one was given), or an `(unresolved)` marker when no explicit model was supplied.
 
-A thinking level requested as a `:<level>` suffix (as produced by the model-modes catalog) is re-attached to the resolved model. Assistant messages carry only provider and model — never the thinking level — so the level cannot be read back from the child and would otherwise vanish the moment the model resolved. Only the segment after the *last* colon counts, and only when it names a valid level, so model ids that legitimately contain colons (`openai/gpt-4o:extended`, `llama3.1:8b`) are left intact.
+A thinking level requested as a `:<level>` suffix (as produced by the agent-modes catalog) is re-attached to the resolved model. Assistant messages carry only provider and model — never the thinking level — so the level cannot be read back from the child and would otherwise vanish the moment the model resolved. Only the segment after the *last* colon counts, and only when it names a valid level, so model ids that legitimately contain colons (`openai/gpt-4o:extended`, `llama3.1:8b`) are left intact.
 
 Example usage line:
 

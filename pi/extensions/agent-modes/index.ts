@@ -16,9 +16,9 @@ import { registerModelRouteResolver } from "./routes-hook.ts";
 import { registerAmpEditorStatusHook } from "./status-hook.ts";
 import type { ActiveMode, ApplyResult, ConfigSnapshot, ModeConfig, ModeDefinition, ModeModel, ThinkingLevel } from "./types.ts";
 
-export default async function modelModesExtension(pi: ExtensionAPI): Promise<void> {
+export default async function agentModesExtension(pi: ExtensionAPI): Promise<void> {
   const startupCwd = process.cwd();
-  const envPath = process.env.PI_MODEL_MODES_CONFIG;
+  const envPath = process.env.PI_AGENT_MODES_CONFIG;
   const path = resolveConfigPath({ envPath, startupCwd, agentDir: getAgentDir() });
   const loader = new ModeConfigLoader(path, Boolean(envPath?.trim()));
   const initial = await loader.refresh(true);
@@ -52,9 +52,9 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   // etc.) would otherwise accumulate duplicate hooks in the shared global set,
   // making the status line repeat "mode:<id>" once per accumulated instance.
   // Unregister any hook left behind by a previous activation before adding ours.
-  const statusHookRegistry = globalThis as typeof globalThis & { __modelModesStatusHookUnregister?: () => void };
-  statusHookRegistry.__modelModesStatusHookUnregister?.();
-  statusHookRegistry.__modelModesStatusHookUnregister = registerAmpEditorStatusHook(() => {
+  const statusHookRegistry = globalThis as typeof globalThis & { __agentModesStatusHookUnregister?: () => void };
+  statusHookRegistry.__agentModesStatusHookUnregister?.();
+  statusHookRegistry.__agentModesStatusHookUnregister = registerAmpEditorStatusHook(() => {
     if (active.kind === "named") return `mode:${active.mode.id}`;
     if (active.kind === "custom") return "mode:custom";
     return undefined;
@@ -64,9 +64,9 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   // repeatedly (reload, resume, fork, new window) while the global Set outlives
   // it, so a stale resolver closed over a dead `currentRoutes` would keep
   // answering alongside ours.
-  const routeHookRegistry = globalThis as typeof globalThis & { __modelModesRouteResolverUnregister?: () => void };
-  routeHookRegistry.__modelModesRouteResolverUnregister?.();
-  routeHookRegistry.__modelModesRouteResolverUnregister = registerModelRouteResolver(
+  const routeHookRegistry = globalThis as typeof globalThis & { __agentModesRouteResolverUnregister?: () => void };
+  routeHookRegistry.__agentModesRouteResolverUnregister?.();
+  routeHookRegistry.__agentModesRouteResolverUnregister = registerModelRouteResolver(
     (key) => currentRoutes.find((route) => route.key === key)?.model,
   );
 
@@ -116,7 +116,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
     currentRoutes = activeRoutes(currentRouteStatuses);
     const label = activeModeLabel();
     const detail = active.kind !== "error" && effective.model ? ` (${effective.model} · thinking:${effective.thinkingLevel})` : "";
-    ctx.ui.setStatus("model-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
+    ctx.ui.setStatus("agent-modes", ctx.ui.theme.fg(active.kind === "error" ? "error" : "accent", `mode:${label}${detail}`));
   };
 
   const activate = async (ctx: ExtensionContext, mode: ModeDefinition, quiet = false) => {
@@ -170,7 +170,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
   const unavailableMessage = (snapshot: Extract<ConfigSnapshot, { ok: false }>): string =>
     snapshot.reason === "missing"
       ? `No mode configuration found at ${snapshot.path}. Run /mode init to generate a starter config, or /mode doctor for details.`
-      : "Model modes configuration is invalid; run /mode doctor for details.";
+      : "Agent modes configuration is invalid; run /mode doctor for details.";
 
   const cycleImpl = async (ctx: ExtensionContext, direction: 1 | -1): Promise<void> => {
     const snapshot = await refresh(ctx);
@@ -245,7 +245,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       activeMode: activeModeLabel(),
       routes: currentRouteStatuses,
     }));
-    if (ctx.mode === "tui") await ctx.ui.editor("model-modes doctor", report);
+    if (ctx.mode === "tui") await ctx.ui.editor("agent-modes doctor", report);
     else console.log(report);
   };
 
@@ -260,7 +260,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       "/mode help — show this help",
       `Config: ${loader.path}`,
     ].join("\n");
-    if (ctx.mode === "tui") await ctx.ui.editor("model-modes help", help);
+    if (ctx.mode === "tui") await ctx.ui.editor("agent-modes help", help);
     else console.log(help);
   };
 
@@ -274,7 +274,7 @@ export default async function modelModesExtension(pi: ExtensionAPI): Promise<voi
       .map((model) => `- ${model.provider}/${model.id} (reasoning: ${model.reasoning ? "yes" : "no"}, context: ${model.contextWindow}, maxOutput: ${model.maxTokens})`)
       .join("\n");
     const prompt = [
-      "Design a starter configuration for the model-modes Pi extension.",
+      "Design a starter configuration for the agent-modes Pi extension.",
       `The file will be saved at: ${loader.path}`,
       "",
       "Available models (only use models from this exact list):",

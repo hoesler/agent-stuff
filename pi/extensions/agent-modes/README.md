@@ -1,10 +1,10 @@
-# Model Modes
+# Agent Modes
 
 Select a provider, model, and Pi thinking level as one named mode.
 
 ## Configuration
 
-Create `~/.pi/agent/model-modes.json`, or set `PI_MODEL_MODES_CONFIG` to an absolute path or a path relative to Pi's startup directory. The environment-selected file replaces the global file; files are never merged.
+Create `~/.pi/agent/agent-modes.json`, or set `PI_AGENT_MODES_CONFIG` to an absolute path or a path relative to Pi's startup directory. The environment-selected file replaces the global file; files are never merged.
 
 ```json
 {
@@ -68,7 +68,7 @@ In non-interactive contexts, `/mode` lists the configured modes instead of openi
 
 ### `/mode init`
 
-If you have not authored `model-modes.json` yet, run `/mode init`. It gathers your currently available provider/model pairs (`ctx.modelRegistry.getAvailable()`) and sends the running agent a prompt asking it to design 3–4 modes (e.g. low/medium/high/ultra) using only those models, and to reply with exactly one fenced ` ```json ` block matching the configuration schema above.
+If you have not authored `agent-modes.json` yet, run `/mode init`. It gathers your currently available provider/model pairs (`ctx.modelRegistry.getAvailable()`) and sends the running agent a prompt asking it to design 3–4 modes (e.g. low/medium/high/ultra) using only those models, and to reply with exactly one fenced ` ```json ` block matching the configuration schema above.
 
 `/mode init` only asks the model to *print* a suggested document as a normal chat reply — it never creates, writes, or edits any file itself. Copy the JSON block from the response and save it to the path shown in the prompt (also the path reported by `/mode doctor`).
 
@@ -96,7 +96,7 @@ To cover that case, this extension also publishes the active mode label (bare `m
 
 ## Exposing the mode catalog to the agent (subagent dispatch)
 
-Set `"exposeCatalogInSystemPrompt": true` at the top level of `model-modes.json` to append the configured modes to the system prompt on every turn:
+Set `"exposeCatalogInSystemPrompt": true` at the top level of `agent-modes.json` to append the configured modes to the system prompt on every turn:
 
 ```json
 {
@@ -110,7 +110,7 @@ Set `"exposeCatalogInSystemPrompt": true` at the top level of `model-modes.json`
 Each mode is rendered as a ready-to-use `provider/model:thinkingLevel` string plus its description:
 
 ```text
-## Available model modes (model-modes extension)
+## Available agent modes (agent-modes extension)
 
 When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass one of these exact strings — including the `:level` suffix — to pin both the model and its thinking level for that task:
 

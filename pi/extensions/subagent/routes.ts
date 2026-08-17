@@ -1,6 +1,6 @@
 /**
  * Read half of the optional `globalThis.__piModelRouteResolvers` contract (see
- * `model-modes`'s `routes-hook.ts` for the publishing half and the full
+ * `agent-modes`'s `routes-hook.ts` for the publishing half and the full
  * contract). Inlined rather than imported: this extension must work with no
  * publisher installed, and must not gain a build dependency on one.
  */
