@@ -983,9 +983,13 @@ export function pendingNotes(notes: HunkNote[], addressed: ReadonlySet<string>):
   return notes.filter((note) => note.source === "user" && !addressed.has(note.noteId));
 }
 
-/** Identifies the place a note hangs on. ` ` cannot occur in a path. */
+/**
+ * Identifies the place a note hangs on. Joined on NUL, written as an escape so
+ * the separator survives being copied: a raw NUL byte in this document made it
+ * unsearchable and reached an implementer as a plain space.
+ */
 function anchorKey(note: HunkNote): string {
-  return `${note.filePath} ${note.side} ${note.line ?? "?"}`;
+  return [note.filePath, note.side, note.line ?? "?"].join("\u0000");
 }
 
 /**
