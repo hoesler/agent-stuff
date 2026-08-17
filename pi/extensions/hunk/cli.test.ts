@@ -108,10 +108,19 @@ test("a non-zero exit surfaces Hunk's own message", async () => {
   assert.equal(!result.ok && result.message, "No diff file matches b.ts");
 });
 
-test("an ENOENT stderr is reported as a missing binary", async () => {
-  const { exec } = fakeExec([{ stderr: "spawn hunk ENOENT", code: 1 }]);
+test("a failure with no output at all is reported as a missing binary", async () => {
+  // This is exactly the shape pi's exec resolves for a spawn failure.
+  const { exec } = fakeExec([{ stdout: "", stderr: "", code: 1 }]);
   const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listSessions();
   assert.equal(!result.ok && result.kind, "missing-binary");
+  assert.match(!result.ok ? result.message : "", /installed and on PATH/);
+});
+
+test("a real Hunk error that mentions a missing file stays a Hunk error", async () => {
+  const { exec } = fakeExec([{ stderr: "hunk: No such file or directory: nope.md", code: 1 }]);
+  const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listNotes("abc", "user");
+  assert.equal(!result.ok && result.kind, "hunk-error");
+  assert.equal(!result.ok && result.message, "No such file or directory: nope.md");
 });
 
 test("an exec that throws is reported as a missing binary, not a crash", async () => {

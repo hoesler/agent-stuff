@@ -23,6 +23,12 @@ export function hunkMessage(stderr: string): string {
   return trimmed.startsWith("hunk:") ? trimmed.slice("hunk:".length).trim() : trimmed;
 }
 
+/**
+ * Whether a *thrown* spawn error names a missing executable. Only the throw
+ * path needs this: pi's own `exec` never throws, so this serves other `Exec`
+ * implementations. It is deliberately not applied to a failed command's output
+ * — see `run`.
+ */
 function looksMissing(text: string): boolean {
   return /ENOENT|command not found|No such file or directory/i.test(text);
 }
@@ -121,11 +127,19 @@ export function createCli(deps: { exec: Exec; hunkBin: string; cwd: string }): H
       return { ok: false, kind: looksMissing(message) ? "missing-binary" : "hunk-error", message };
     }
     if (outcome.code === 0) return { ok: true, value: outcome.stdout };
-    const combined = `${outcome.stderr}\n${outcome.stdout}`;
-    if (looksMissing(combined)) {
-      return { ok: false, kind: "missing-binary", message: `${deps.hunkBin} is not installed or not on PATH` };
+    // pi's `exec` resolves a spawn failure as `{stdout:"", stderr:"", code:1}`,
+    // discarding the ENOENT, so blank output on a failure is the only signal
+    // that the binary never ran — Hunk itself always prints a message. Matching
+    // the text instead would misread a real Hunk error that happens to mention
+    // a missing file, and would send the user to reinstall Hunk over a bad path.
+    if (!outcome.stderr.trim() && !outcome.stdout.trim()) {
+      return {
+        ok: false,
+        kind: "missing-binary",
+        message: `\`${deps.hunkBin}\` failed without output. Check that Hunk is installed and on PATH.`,
+      };
     }
-    return { ok: false, kind: "hunk-error", message: hunkMessage(outcome.stderr) || "hunk failed with no message" };
+    return { ok: false, kind: "hunk-error", message: hunkMessage(outcome.stderr) || hunkMessage(outcome.stdout) };
   }
 
   return {
