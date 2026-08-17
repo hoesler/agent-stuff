@@ -213,14 +213,32 @@ describe("execute", () => {
 	/** A ctx with no UI, so the trust gate does not apply. */
 	const headless = { cwd, hasUI: false };
 
-	function execute(result: AgentDiscoveryResult, params: unknown, ctx: unknown, spawnChild?: SpawnChild) {
-		return createSubagentTool(result, { spawnChild }).execute(
+	/**
+	 * What a caller actually sees. Narrowed here rather than at each assertion:
+	 * `AgentToolResult` reaches this package through `@earendil-works/pi-agent-core`,
+	 * which is not installed, so its members are not visible to read.
+	 */
+	interface ExecuteResult {
+		isError?: boolean;
+		content: { type: string; text: string }[];
+		details: { mode: string; results: { exitCode: number; step?: number }[] };
+	}
+
+	async function execute(
+		result: AgentDiscoveryResult,
+		params: unknown,
+		ctx: unknown,
+		spawnChild?: SpawnChild,
+	): Promise<ExecuteResult> {
+		const tool = createSubagentTool(result, { spawnChild });
+		const outcome = await tool.execute(
 			"call-id",
 			params as never,
 			new AbortController().signal,
 			undefined,
 			ctx as never,
 		);
+		return outcome as unknown as ExecuteResult;
 	}
 
 	describe("chain", () => {
@@ -276,6 +294,116 @@ describe("execute", () => {
 
 			assert.equal(tasks[1], "Task: X then X");
 		});
+
+		test("a failed step stops the chain before the later steps run", async () => {
+			// An unknown agent fails without spawning, so the recorded tasks are
+			// exactly the steps that got as far as a child.
+			const { tasks, spawnChild } = children("first", "third");
+			const result = await execute(
+				discovery(),
+				{
+					chain: [
+						{ agent: "stub", task: "one" },
+						{ agent: "ghost", task: "two" },
+						{ agent: "stub", task: "three" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.deepEqual(tasks, ["Task: one"]);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /Chain stopped at step 2 \(ghost\)/);
+		});
+
+		test("the steps that already completed survive the stop", async () => {
+			// Returning an empty list here would discard the record of work already
+			// done and paid for — the same guarantee a killed run makes in run.ts.
+			const { spawnChild } = children("first");
+			const result = await execute(
+				discovery(),
+				{
+					chain: [
+						{ agent: "stub", task: "one" },
+						{ agent: "ghost", task: "two" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			const { results } = result.details;
+			assert.equal(results.length, 2);
+			assert.deepEqual(
+				results.map((r) => [r.step, r.exitCode]),
+				[
+					[1, 0],
+					[2, 1],
+				],
+			);
+		});
+	});
+
+	describe("parallel", () => {
+		test("a batch with one survivor is not an error", async () => {
+			// Siblings are independent: one bad task must not condemn the rest.
+			const { tasks, spawnChild } = children("done");
+			const result = await execute(
+				discovery(),
+				{
+					tasks: [
+						{ agent: "stub", task: "one" },
+						{ agent: "ghost", task: "two" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.deepEqual(tasks, ["Task: one"]);
+			assert.notEqual(result.isError, true);
+			assert.match(result.content[0].text, /Parallel: 1\/2 succeeded/);
+		});
+
+		test("a batch is an error only once nothing at all succeeded", async () => {
+			const { spawnChild } = children();
+			const result = await execute(
+				discovery(),
+				{
+					tasks: [
+						{ agent: "ghost", task: "one" },
+						{ agent: "phantom", task: "two" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /Parallel: 0\/2 succeeded/);
+		});
+
+		test("each failure carries the reason the caller needs to retry", async () => {
+			// The summary is all the caller sees of a failed sibling, so a bare
+			// "failed" would strand it with no way to correct the call.
+			const { spawnChild } = children("done");
+			const result = await execute(
+				discovery(),
+				{
+					tasks: [
+						{ agent: "stub", task: "one" },
+						{ agent: "ghost", task: "two" },
+					],
+				},
+				headless,
+				spawnChild,
+			);
+
+			const text = result.content[0].text;
+			assert.match(text, /\[ghost\].*Unknown agent: "ghost"/s);
+			assert.match(text, /Available agents: "stub"/);
+		});
 	});
 
 	describe("project-agent trust gate", () => {
@@ -306,7 +434,7 @@ describe("execute", () => {
 			);
 
 			assert.deepEqual(tasks, []);
-			assert.match((result.content[0] as { text: string }).text, /Canceled: project-local agents not approved/);
+			assert.match(result.content[0].text, /Canceled: project-local agents not approved/);
 		});
 
 		test("an approved confirmation lets the run proceed", async () => {
