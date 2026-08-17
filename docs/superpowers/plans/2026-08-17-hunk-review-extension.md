@@ -2338,7 +2338,10 @@ export default function hunkExtension(pi: ExtensionAPI) {
   pi.on("resources_discover", async () => {
     const path = await createCli({ exec, hunkBin: config.hunkBin, cwd: process.cwd() }).skillPath();
     if (!path.ok || !path.value) return {};
-    return { skillPaths: [dirname(path.value)] };
+    // pi's loader takes either a directory or a markdown file (core/skills.js),
+    // so the printed SKILL.md path goes in verbatim: exact, and it cannot pick
+    // up whatever else a future Hunk release ships alongside it.
+    return { skillPaths: [path.value] };
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -2425,16 +2428,9 @@ Expected: PASS. If `ctx.ui.custom`'s generic or `SelectList`'s constructor disag
 Run: `npm test`
 Expected: PASS — no test targets `index.ts`, but nothing may regress.
 
-- [ ] **Step 4: Verify the skill path granularity against a running pi**
+- [ ] **Step 4: (resolved — no action)**
 
-This is the spec's one remaining unknown: whether `skillPaths` wants the skill's directory or its parent.
-
-```bash
-hunk skill path                       # note the printed path
-pi -e pi/extensions/hunk/index.ts     # then, inside pi, run: /skills
-```
-
-Expected: a `hunk-review` skill is listed. If it is not, change the `resources_discover` handler to return `dirname(dirname(path.value))` — the parent of the skill directory — and check again. Record whichever works in a comment on that handler.
+The spec's remaining unknown was whether `skillPaths` wants the skill's directory or its parent. Answered from pi's own loader rather than by experiment: `core/skills.js` resolves each entry with `statSync` and accepts **either** a directory (recursively scanned) **or** a file ending in `.md`. So the printed `SKILL.md` path is passed verbatim, as the handler above now does. Nothing to run here.
 
 - [ ] **Step 5: Smoke-test both modes against a real window**
 
