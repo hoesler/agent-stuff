@@ -89,17 +89,26 @@ export async function ensureSession(
     };
   }
 
+  // A failing poll is not fatal — the daemon may not be listening yet — but the
+  // last failure is kept, because "did not register" misdescribes a `hunk` that
+  // has started erroring, and sending the user to re-run would waste their time.
   const deadline = deps.now() + POLL_CEILING_MS;
+  let lastPollError: string | undefined;
   while (deps.now() < deadline) {
     await deps.sleep(POLL_INTERVAL_MS);
     const polled = await deps.cli.listSessions();
-    if (!polled.ok) continue;
+    if (!polled.ok) {
+      lastPollError = polled.message;
+      continue;
+    }
     const found = await matching(deps, polled.value, root);
     if (found.length > 0) return { kind: "session", sessionId: found[0].sessionId };
   }
 
   return {
     kind: "none",
-    message: "The Hunk window opened but did not register within 5s. Run /hunk again.",
+    message: lastPollError
+      ? `The Hunk window opened but could not be reached: ${lastPollError}`
+      : `The Hunk window opened but did not register within ${POLL_CEILING_MS / 1000}s. Run /hunk again.`,
   };
 }

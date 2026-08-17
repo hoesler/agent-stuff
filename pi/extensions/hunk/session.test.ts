@@ -160,6 +160,30 @@ test("a failed spawn hands the user the command to run", async () => {
   assert.match(message, /hunk diff --staged/);
 });
 
+test("a realpath that throws falls back to comparing the paths as given", async () => {
+  const { cli } = fakeCli([{ ok: true, value: [session("abc", "/work/repo")] }]);
+  const result = await ensureSession(
+    deps({
+      cli,
+      realpath: async () => {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    }),
+    {},
+  );
+  assert.deepEqual(result, { kind: "session", sessionId: "abc" });
+});
+
+test("a poll that keeps failing names the failure instead of blaming registration", async () => {
+  const { cli } = fakeCli([
+    { ok: true, value: [] },
+    { ok: false, kind: "hunk-error", message: "daemon socket closed" },
+  ]);
+  const result = await ensureSession(deps({ cli }), { target: ["diff"] });
+  assert.equal(result.kind, "none");
+  assert.match(result.kind === "none" ? result.message : "", /daemon socket closed/);
+});
+
 test("a poll that never finds the window gives up instead of hanging", async () => {
   const { cli, listCalls } = fakeCli([{ ok: true, value: [] }]);
   const result = await ensureSession(deps({ cli }), { target: ["diff"] });
