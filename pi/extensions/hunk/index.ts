@@ -65,6 +65,12 @@ export default function hunkExtension(pi: ExtensionAPI) {
     return result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
   }
 
+  async function currentBranch(cwd: string): Promise<string | undefined> {
+    const result = await pi.exec("git", ["branch", "--show-current"], { cwd });
+    if (result.code !== 0) return undefined;
+    return result.stdout.trim() || undefined;
+  }
+
   async function recentCommits(cwd: string): Promise<Array<{ sha: string; title: string }>> {
     const result = await pi.exec("git", ["log", "-n", "15", "--format=%h%x09%s"], { cwd });
     if (result.code !== 0) return [];
@@ -126,14 +132,20 @@ export default function hunkExtension(pi: ExtensionAPI) {
 
     if (chosen === ("baseBranch" satisfies PresetValue)) {
       const branches = await localBranches(ctx.cwd);
-      if (branches.length === 0) {
-        ctx.ui.notify("No local branches to compare against.", "warning");
+      const current = await currentBranch(ctx.cwd);
+      // Never offer the current branch as a base (diffing it against itself is empty).
+      const candidates = current ? branches.filter((name) => name !== current) : branches;
+      if (candidates.length === 0) {
+        ctx.ui.notify(
+          current ? `No other branches to compare against (current branch: ${current}).` : "No local branches to compare against.",
+          "warning",
+        );
         return undefined;
       }
       const branch = await pick(
         ctx,
         "Base branch",
-        branches.map((name) => ({ value: name, label: name, description: "" })),
+        candidates.map((name) => ({ value: name, label: name, description: "" })),
         0,
       );
       return branch ? { kind: "baseBranch", branch } : undefined;
