@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formatModelDisplay,
+  isBareThinkingLevel,
   resolveModelFromMessage,
   resolveModelSelection,
   splitThinkingLevel,
@@ -107,4 +108,28 @@ test("no effort is invented when none was requested", () => {
     "github-copilot/claude-sonnet-5 [agent]",
   );
   assert.equal(formatModelDisplay(undefined, "pi-default", "openai/gpt-5.5"), "openai/gpt-5.5 [pi-default]");
+});
+
+test("every thinking level on its own is recognised as the mistake it is", () => {
+  for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.equal(isBareThinkingLevel(level), true, level);
+  }
+});
+
+test("a level attached to a model reference is the correct form, not the mistake", () => {
+  for (const model of [
+    "github-copilot/claude-sonnet-5:high",
+    "anthropic/claude-opus-5:max",
+    "ollama/llama3.1:8b:medium",
+  ]) {
+    assert.equal(isBareThinkingLevel(model), false, model);
+  }
+});
+
+test("a bare word that is not a thinking level is left alone", () => {
+  // Pi's `--model` takes a pattern, so a bare id may well match; only a
+  // thinking level is unambiguously the wrong kind of value.
+  for (const value of ["ultra", "sonnet", "oracle", "", undefined]) {
+    assert.equal(isBareThinkingLevel(value), false, String(value));
+  }
 });

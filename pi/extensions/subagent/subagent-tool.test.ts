@@ -72,3 +72,101 @@ describe("dispatch", () => {
 		assert.equal(captured.at(-1), "Task: do a thing");
 	});
 });
+
+/**
+ * The mistake this guards against is a caller reaching for "run this harder"
+ * and writing the thinking level alone. Left to pass through, it costs a child
+ * process before pi rejects it.
+ */
+describe("model given as a bare thinking level", () => {
+	/** Records whether a child was started, and with which `--model`. */
+	function spy() {
+		const calls: (string | undefined)[] = [];
+		const spawnChild = ((args: string[]) => {
+			const i = args.indexOf("--model");
+			calls.push(i === -1 ? undefined : args[i + 1]);
+			return quickChild([], "");
+		}) as SpawnChild;
+		return { calls, spawnChild };
+	}
+
+	test("fails without spawning anything, naming the mistake", async () => {
+		const { calls, spawnChild } = spy();
+		const result = await run({ globalModel: "medium", spawnChild });
+
+		assert.deepEqual(calls, []);
+		assert.equal(result.exitCode, 1);
+		assert.match(result.stderr, /Invalid model "medium": that is a thinking level, not a model/);
+	});
+
+	test("suggests the persona's own model carrying the requested level", async () => {
+		const { spawnChild } = spy();
+		const result = await run({
+			agents: [{ ...agents[0], model: "github-copilot/claude-sonnet-5" }] as AgentConfig[],
+			taskModel: "high",
+			spawnChild,
+		});
+
+		assert.match(result.stderr, /"github-copilot\/claude-sonnet-5:high"/);
+	});
+
+	test("does not stack one level on top of another when suggesting", async () => {
+		const { spawnChild } = spy();
+		const result = await run({
+			agents: [{ ...agents[0], model: "github-copilot/claude-sonnet-5:low" }] as AgentConfig[],
+			taskModel: "max",
+			spawnChild,
+		});
+
+		assert.match(result.stderr, /"github-copilot\/claude-sonnet-5:max"/);
+		assert.doesNotMatch(result.stderr, /:low:max/);
+	});
+
+	test("falls back to a generic example when the persona names no usable model", async () => {
+		const { spawnChild } = spy();
+		// A route key is not a model reference: appending a level to it defeats
+		// the lookup, so it must not be offered as the fix.
+		const result = await run({
+			agents: [{ ...agents[0], model: "ultra" }] as AgentConfig[],
+			taskModel: "high",
+			spawnChild,
+		});
+
+		assert.doesNotMatch(result.stderr, /"ultra:high"/);
+		assert.match(result.stderr, /provider\/model/);
+	});
+
+	test("blames the persona file when the level came from its frontmatter", async () => {
+		const { spawnChild } = spy();
+		const result = await run({
+			agents: [{ ...agents[0], model: "medium" }] as AgentConfig[],
+			spawnChild,
+		});
+
+		assert.equal(result.modelSource, "frontmatter");
+		assert.match(result.stderr, /"stub" persona/);
+	});
+
+	test("a level attached to a model reference dispatches untouched", async () => {
+		const { calls, spawnChild } = spy();
+		const result = await run({ globalModel: "github-copilot/claude-sonnet-5:medium", spawnChild });
+
+		assert.deepEqual(calls, ["github-copilot/claude-sonnet-5:medium"]);
+		assert.equal(result.exitCode, 0);
+	});
+
+	test("a route key that happens to be named after a level still resolves and dispatches", async () => {
+		const g = globalThis as { __piModelRouteResolvers?: Set<(key: string) => string | undefined> };
+		const resolver = (key: string) => (key === "high" ? "anthropic/claude-opus-5:max" : undefined);
+		(g.__piModelRouteResolvers ??= new Set()).add(resolver);
+		try {
+			const { calls, spawnChild } = spy();
+			const result = await run({ globalModel: "high", spawnChild });
+
+			assert.deepEqual(calls, ["anthropic/claude-opus-5:max"]);
+			assert.equal(result.exitCode, 0);
+		} finally {
+			g.__piModelRouteResolvers?.delete(resolver);
+		}
+	});
+});

@@ -18,7 +18,13 @@ import { type TSchema, Type } from "typebox";
 import { type AgentConfig, type AgentDiscoveryResult, type AgentSource, suggestAgentName } from "./agents.ts";
 import { buildAgentNameSchema, buildToolDescription, formatAgentNames } from "./catalog.ts";
 import { type DisplayItem, formatToolCall, formatUsageStats, getDisplayItems } from "./display.ts";
-import { formatModelDisplay, type ModelSource, resolveModelSelection } from "./model-display.ts";
+import {
+	formatModelDisplay,
+	isBareThinkingLevel,
+	type ModelSource,
+	resolveModelSelection,
+	splitThinkingLevel,
+} from "./model-display.ts";
 import { resolveModelReference } from "./routes.ts";
 import {
 	type AgentRunResult,
@@ -47,6 +53,27 @@ const COLLAPSED_ITEM_COUNT = 10;
 
 const isFailedResult = isFailedRun;
 const describeFailure = describeRunFailure;
+
+/**
+ * What to say when a caller passed a thinking level where a model belongs.
+ *
+ * The fix is spelled out as a value that can be pasted straight back. When the
+ * persona names a real model reference, that is the value — the caller wanted
+ * "this agent, thinking harder", and this is the exact string that says so.
+ * Anything else (a route key, another bare level) would stop resolving once a
+ * suffix were appended to it, so those fall back to naming the shape.
+ */
+function describeBareThinkingLevel(level: string, agentName: string, agentModel: string | undefined): string {
+	const base = agentModel?.includes("/") ? splitThinkingLevel(agentModel).model : undefined;
+	const example = base ? `"${base}:${level}"` : `"provider/model:${level}" (e.g. "anthropic/claude-sonnet-5:${level}")`;
+	// A level reaching here from frontmatter is a broken persona file, not a bad
+	// call, so "omit it" would send the caller to fix the wrong thing.
+	const remedy =
+		agentModel === level
+			? `The "${agentName}" persona's own \`model:\` frontmatter holds it and needs fixing.`
+			: "Or omit `model` to use the agent's own model.";
+	return `Invalid model "${level}": that is a thinking level, not a model. Append it to a model reference instead — e.g. ${example}. ${remedy}`;
+}
 
 export type { SpawnChild } from "./run.ts";
 
@@ -137,6 +164,23 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 	// the child errors on it, exactly as it did before routes existed.
 	const dispatchModel = resolveModelReference(selection.model);
 
+	// After route resolution, not before: a route may legitimately be keyed
+	// "high", and it resolves to a full reference that is no longer bare.
+	if (isBareThinkingLevel(dispatchModel)) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: describeBareThinkingLevel(dispatchModel!, agentName, agent.model),
+			usage: emptyUsage(),
+			requestedModel: dispatchModel,
+			modelSource: selection.source,
+			step,
+		};
+	}
+
 	const result: SingleResult = {
 		agent: agentName,
 		agentSource: agent.source,
@@ -191,11 +235,27 @@ export async function runSingleAgent(options: RunAgentOptions): Promise<SingleRe
 function buildSubagentParams(agents: AgentConfig[]): TSchema {
 	const agentName = buildAgentNameSchema(agents, EXAMPLE_AGENTS_DIR);
 
+	/**
+	 * The grammar, stated wherever a model can be passed. Naming the wrong shape
+	 * outright is the point: without it, a caller reaching for "think harder"
+	 * writes the thinking level alone, which is not a model and cannot be one.
+	 */
+	const modelForm = [
+		'Either "provider/model" with an optional ":thinkingLevel" suffix (e.g. "anthropic/claude-sonnet-5:high"),',
+		"or a bare route key.",
+		'A bare thinking level ("low", "medium", "high", ...) is NOT a model — attach it to a model reference as a suffix instead.',
+		"Omit to use the agent's own model.",
+	].join(" ");
+
 	const TaskItem = Type.Object({
 		agent: agentName,
 		task: Type.String({ description: "Task to delegate to the agent" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-		model: Type.Optional(Type.String({ description: "Model override for this task (takes precedence over global model and agent frontmatter)" })),
+		model: Type.Optional(
+			Type.String({
+				description: `Model override for this task (takes precedence over global model and agent frontmatter). ${modelForm}`,
+			}),
+		),
 		timeoutSeconds: Type.Optional(
 			Type.Number({
 				minimum: 1,
@@ -209,7 +269,11 @@ function buildSubagentParams(agents: AgentConfig[]): TSchema {
 		agent: agentName,
 		task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
-		model: Type.Optional(Type.String({ description: "Model override for this step (takes precedence over global model and agent frontmatter)" })),
+		model: Type.Optional(
+			Type.String({
+				description: `Model override for this step (takes precedence over global model and agent frontmatter). ${modelForm}`,
+			}),
+		),
 		timeoutSeconds: Type.Optional(
 			Type.Number({
 				minimum: 1,
@@ -224,7 +288,11 @@ function buildSubagentParams(agents: AgentConfig[]): TSchema {
 		task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 		tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 		chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
-		model: Type.Optional(Type.String({ description: "Global model override for all tasks in this call. Per-task model takes precedence; both override agent frontmatter." })),
+		model: Type.Optional(
+			Type.String({
+				description: `Global model override for all tasks in this call. Per-task model takes precedence; both override agent frontmatter. ${modelForm}`,
+			}),
+		),
 		timeoutSeconds: Type.Optional(
 			Type.Number({
 				minimum: 1,

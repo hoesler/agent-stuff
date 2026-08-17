@@ -106,7 +106,25 @@ Keys are resolved at dispatch time through an optional, dependency-free contract
 
 Resolving late is the point. A key like `oracle` can mean a different model in each mode, so the answer is read at the moment the child is spawned rather than baked into a system prompt that may predate the current `/mode`.
 
-With no publisher installed, or with a key nothing resolves, the bare value is passed to the child unchanged and the child errors on an unknown model — exactly the behavior before routes existed.
+With no publisher installed, or with a key nothing resolves, the bare value is passed to the child unchanged and the child errors on an unknown model — exactly the behavior before routes existed. The one exception is below.
+
+### Thinking levels are not models
+
+A caller reading `model` as "how hard should this think" writes the thinking level on its own — `model: "medium"`. That value can never be a model: a reference is `provider/model` with the level as an optional `:thinkingLevel` suffix. Left to pass through, it would buy a child process before pi rejected it.
+
+So a value that is exactly a thinking level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) fails the task before anything is spawned, with the correct string to use instead:
+
+```text
+Invalid model "medium": that is a thinking level, not a model. Append it to a model
+reference instead — e.g. "github-copilot/claude-sonnet-5:medium". Or omit `model` to
+use the agent's own model.
+```
+
+When the persona's frontmatter names a real model reference, that reference is what the message suggests — the caller wanted this agent thinking harder, and the suggested value is the exact string that says so. A level arriving *from* the frontmatter names the persona file as the thing to fix, since omitting the parameter would not help.
+
+The check runs after route resolution, so a route legitimately keyed `high` resolves to a full reference first and is never flagged. It is also the only bare word refused: pi's `--model` takes a *pattern*, so any other one may legitimately match a model id.
+
+It fails the task, not the call — in a parallel batch a single bad `model` costs only its own task, and its siblings still run.
 
 ### Promoted guidance
 

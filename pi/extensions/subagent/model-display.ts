@@ -62,6 +62,22 @@ function isThinkingLevel(value: string): value is ModelThinkingLevel {
 }
 
 /**
+ * True when a requested model is a thinking level and nothing else — the shape
+ * a caller produces when it reads `model` as "how hard should this think".
+ *
+ * The two halves of a model reference are `provider/model` and an optional
+ * `:thinkingLevel` suffix, so a level standing alone can never be a model, and
+ * pi will reject it after a child process has already been paid for. It is the
+ * only bare word worth refusing: pi's `--model` takes a *pattern*, so any other
+ * one may legitimately match a model id, and a route key resolves to a full
+ * reference before this ever sees it.
+ */
+export function isBareThinkingLevel(requested: string | undefined): boolean {
+  if (!requested) return false;
+  return !requested.includes("/") && isThinkingLevel(requested);
+}
+
+/**
  * Split a requested model into its model part and an optional thinking level.
  *
  * Mirrors Pi's parsing: only the segment after the *last* colon is considered,
