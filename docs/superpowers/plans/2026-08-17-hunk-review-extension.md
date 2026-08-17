@@ -902,6 +902,34 @@ test("a reply on a different line leaves its note unconfirmed", () => {
   assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
 });
 
+test("two notes on one line with a single reply leave both pending", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
+test("two notes on one line with two replies confirm both", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+    note({ noteId: "mcp:r2", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:01:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), ["u1", "u2"]);
+});
+
+test("a reply created exactly at the dispatch time does not count", () => {
+  const user = [note({ noteId: "u1" })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", createdAt: "2026-08-17T11:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
 test("nextAddressed unions and sorts, without duplicating", () => {
   assert.deepEqual(nextAddressed(new Set(["b"]), ["a", "b"]), ["a", "b"]);
 });
@@ -955,8 +983,9 @@ export function pendingNotes(notes: HunkNote[], addressed: ReadonlySet<string>):
   return notes.filter((note) => note.source === "user" && !addressed.has(note.noteId));
 }
 
-function sameAnchor(a: HunkNote, b: HunkNote): boolean {
-  return a.filePath === b.filePath && a.side === b.side && a.line === b.line;
+/** Identifies the place a note hangs on. ` ` cannot occur in a path. */
+function anchorKey(note: HunkNote): string {
+  return `${note.filePath} ${note.side} ${note.line ?? "?"}`;
 }
 
 /**
@@ -978,7 +1007,27 @@ export function confirmAddressed(
       note.createdAt !== undefined &&
       note.createdAt > options.since,
   );
-  return userNotes.filter((note) => replies.some((reply) => sameAnchor(note, reply))).map((note) => note.noteId);
+
+  // Hunk allows several notes on one line, and a reply carries no reference to
+  // the note it answers. So notes are confirmed per anchor, and only when the
+  // replies there are at least as many as the notes: two questions answered
+  // once leaves both pending. Erring this way costs a re-offer; erring the
+  // other way buries a note the agent never answered, permanently, because the
+  // addressed set only ever grows.
+  const groups = new Map<string, HunkNote[]>();
+  for (const note of userNotes) {
+    const key = anchorKey(note);
+    const group = groups.get(key);
+    if (group) group.push(note);
+    else groups.set(key, [note]);
+  }
+
+  const confirmed: string[] = [];
+  for (const [key, group] of groups) {
+    const answered = replies.filter((reply) => anchorKey(reply) === key).length;
+    if (answered >= group.length) confirmed.push(...group.map((note) => note.noteId));
+  }
+  return confirmed;
 }
 
 export function nextAddressed(addressed: ReadonlySet<string>, confirmed: string[]): string[] {
