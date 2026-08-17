@@ -40,12 +40,12 @@ const NOTES_JSON = JSON.stringify({
 });
 
 /** An exec that records its calls and replays canned outcomes in order. */
-function fakeExec(outcomes: Array<{ stdout?: string; stderr?: string; code?: number }>) {
+function fakeExec(outcomes: Array<{ stdout?: string; stderr?: string; code?: number; killed?: boolean }>) {
   const calls: Array<{ command: string; args: string[] }> = [];
   const exec: Exec = async (command, args) => {
     calls.push({ command, args });
     const next = outcomes.shift() ?? { stdout: "", stderr: "", code: 0 };
-    return { stdout: next.stdout ?? "", stderr: next.stderr ?? "", code: next.code ?? 0 };
+    return { stdout: next.stdout ?? "", stderr: next.stderr ?? "", code: next.code ?? 0, killed: next.killed };
   };
   return { exec, calls };
 }
@@ -114,6 +114,16 @@ test("a failure with no output at all is reported as a missing binary", async ()
   const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listSessions();
   assert.equal(!result.ok && result.kind, "missing-binary");
   assert.match(!result.ok ? result.message : "", /installed and on PATH/);
+});
+
+test("a killed process is reported as a timeout, never as an empty success", async () => {
+  // pi's own exec resolves a timed-out process as `{ stdout: "", stderr: "", code: 0, killed: true }` —
+  // code 0 alone must not be read as success once `killed` is set.
+  const { exec } = fakeExec([{ stdout: "", stderr: "", code: 0, killed: true }]);
+  const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listSessions();
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.kind, "hunk-error");
+  assert.match(!result.ok ? result.message : "", /timed out/i);
 });
 
 test("a real Hunk error that mentions a missing file stays a Hunk error", async () => {

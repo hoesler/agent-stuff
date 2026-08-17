@@ -4,6 +4,8 @@ export interface ExecOutcome {
   stdout: string;
   stderr: string;
   code: number;
+  /** Set when the process was killed (e.g. by a timeout) rather than exiting on its own. */
+  killed?: boolean;
 }
 
 /** The one seam onto the outside world. `pi.exec` satisfies this. */
@@ -125,6 +127,12 @@ export function createCli(deps: { exec: Exec; hunkBin: string; cwd: string }): H
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, kind: looksMissing(message) ? "missing-binary" : "hunk-error", message };
+    }
+    // A killed process (a timeout, most often) can still resolve `code: 0` —
+    // pi's own `exec` reports `code ?? 0`, so a genuine empty success is
+    // indistinguishable from a timeout unless `killed` is checked first.
+    if (outcome.killed) {
+      return { ok: false, kind: "hunk-error", message: "hunk timed out — no response within the configured limit." };
     }
     if (outcome.code === 0) return { ok: true, value: outcome.stdout };
     // pi's `exec` resolves a spawn failure as `{stdout:"", stderr:"", code:1}`,
