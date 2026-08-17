@@ -160,8 +160,10 @@ extension.
 `ensureSession(cwd, target)` returns the id of a live session showing the target,
 or an explanation of why there is none.
 
-1. **Probe.** `hunk session list --json`, matching each session's repository root
-   against `git rev-parse --show-toplevel`.
+1. **Probe.** `hunk session list --json`, matching each session's `repoRoot`
+   against `git rev-parse --show-toplevel`. Both sides go through `realpath`
+   first: Hunk reports resolved paths, and on macOS a repository under `/tmp`
+   reaches pi as `/tmp/…` and Hunk as `/private/tmp/…`.
 2. **One match.** Reload it onto the target with
    `hunk session reload --repo <root> -- diff …` when a target was given. Without
    a target, use it as it stands.
@@ -252,10 +254,11 @@ branch, exactly as `tool-catalog/state.ts` restores tool overrides: filter for
 and let a malformed later entry never discard a good earlier one. Forking a
 session therefore carries the addressed set along the branch that earned it.
 
-Keying on Hunk's comment ids has one consequence worth stating: relaunching the
-Hunk window mints new ids, so every note reads as new again. That is the right
-default. A fresh window is a fresh review, and re-answering a note is cheap while
-silently skipping one is not.
+Keying on Hunk's `noteId` has one consequence worth stating: relaunching the Hunk
+window mints new ids, so every note reads as new again. That is the right default.
+A fresh window is a fresh review, and re-answering a note is cheap while silently
+skipping one is not. Reloading a window is not a relaunch — ids survive it, as
+measured below.
 
 This is also what makes `/hunk fix` re-runnable. Asking it twice in a row answers
 "anything new for me?" honestly, rather than redoing the same work.
@@ -360,25 +363,49 @@ Behaviors to pin:
    forwarded unparsed, pathspec included.
 10. `ghostty.ts` refuses a non-darwin platform without invoking `osascript`.
 
-## To verify during implementation
+## Verified against a live session
 
-Three things this design assumes and does not establish. Each needs checking
-against a live session rather than reasoning about.
+Measured against Hunk 0.18.2, driving a real session through a pty. The JSON
+shapes below are what the implementation parses.
 
-1. **Whether `skillPaths` wants the skill directory or its parent.**
-   `hunk skill path` prints a path to `SKILL.md`; pi's own layout is
-   `skills/<name>/SKILL.md`.
-2. **Whether `comment list --json` exposes stable comment ids.** The addressed set
-   depends on it. `comment rm <comment-id>` implies ids exist and are addressable;
-   their stability across a reload is the open part.
-3. **Whether user notes survive `session reload`.** Fixing code shifts line
-   numbers, so a note may re-anchor, move, or vanish. This decides nothing in the
-   current design — the extension never reloads after a fix — but it decides
-   whether reload-after-fix is worth adding later.
+`session list --json` returns `{"sessions": [...]}`, each entry carrying
+`sessionId`, `pid`, `cwd`, `repoRoot`, `title`, `fileCount`, `files[]`, and a
+`snapshot.state` block. **`repoRoot` is the field to match on**, and it arrives
+fully resolved — `/private/tmp/…`, not `/tmp/…` — so matching must compare real
+paths, not the string pi was started with.
+
+`comment list --json` returns `{"comments": [...]}` with `noteId`, `source`,
+`filePath`, `hunkIndex`, `newRange`/`oldRange`, `body`, `author`, `createdAt`, and
+`editable`. `comment add --json` returns the same identifier under a different
+name — `result.commentId`. `summary` and `rationale` arrive merged into `body`,
+separated by a blank line.
+
+Type separation works as assumed: a note added through the CLI reads as
+`source: "agent"` and is absent from `--type user`.
+
+Two findings settle open questions:
+
+**Comment ids are stable across a reload, and notes survive it.** The addressed
+set can therefore key on `noteId` even when the window is reloaded. Only
+relaunching Hunk mints new ids.
+
+**Anchors do not follow the code.** After shifting every line in a file down by
+one and reloading, the note still reported `newRange: [2, 2]` — the old line
+number, now pointing at different content. This settles reload-after-fix as
+something to leave out rather than defer: reloading after a fix would leave every
+note pointing at whatever moved into its old position. Fix mode not reloading is
+the feature, not a limitation.
+
+### Still to verify
+
+One thing remains, and it needs a running pi rather than a running Hunk:
+**whether `skillPaths` wants the skill directory or its parent.** `hunk skill
+path` prints a path to `SKILL.md`; pi's own layout is `skills/<name>/SKILL.md`.
 
 ## Not included
 
-- Reloading the window after a fix, pending the answer to (3) above.
+- Reloading the window after a fix. Anchors keep their old line numbers, so a
+  reload would point every note at whatever moved into its place.
 - STML rich markup notes. They need `--experimental` on the user's own launch,
   and plain summaries carry the workflow.
 - Typed tools wrapping the Hunk CLI. The adopted skill covers the surface.
