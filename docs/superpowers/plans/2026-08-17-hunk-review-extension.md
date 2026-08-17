@@ -1290,6 +1290,10 @@ test("--session with no value is an error", () => {
   assert.deepEqual(parseCommand("--session"), { error: "--session needs a session id." });
 });
 
+test("a repeated --session takes the last one", () => {
+  assert.deepEqual(parseCommand("--session abc --session def"), { mode: "auto", sessionId: "def" });
+});
+
 test("a bare --session still leaves auto mode when nothing else is given", () => {
   assert.deepEqual(parseCommand("--session abc"), { mode: "auto", sessionId: "abc" });
 });
