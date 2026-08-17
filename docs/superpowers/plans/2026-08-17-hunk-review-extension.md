@@ -1937,12 +1937,22 @@ function note(overrides: Partial<HunkNote> & { noteId: string }): HunkNote {
 test("the work list anchors each note to a file, side, and line", () => {
   const rendered = renderWorkList([note({ noteId: "live:1" })]);
   assert.match(rendered, /src\/a\.ts/);
-  assert.match(rendered, /--new-line 42/);
+  assert.match(rendered, /line 42 \(new side\)/);
   assert.match(rendered, /this leaks a handle/);
+  assert.doesNotMatch(rendered, /--new-line|--old-line/);
 });
 
-test("an old-side note is rendered with the old-line flag", () => {
-  assert.match(renderWorkList([note({ noteId: "live:2", side: "old", line: 7 })]), /--old-line 7/);
+test("an old-side note names the old side", () => {
+  assert.match(renderWorkList([note({ noteId: "live:2", side: "old", line: 7 })]), /line 7 \(old side\)/);
+});
+
+test("a multi-line body stays indented under its own number", () => {
+  const rendered = renderWorkList([
+    note({ noteId: "live:4", body: "this leaks\nand it is load bearing" }),
+    note({ noteId: "live:5", body: "second" }),
+  ]);
+  assert.match(rendered, /1\. .*\n   this leaks\n   and it is load bearing/);
+  assert.match(rendered, /2\. /);
 });
 
 test("a note with no line still appears, without inventing one", () => {
@@ -1978,8 +1988,10 @@ test("the fix prompt carries the notes and the author to reply as", () => {
 
 test("the fix prompt forbids removing the user's notes", () => {
   const prompt = fixPrompt({ sessionId: "abc", notes: [note({ noteId: "live:1" })], author: "pi" });
-  assert.match(prompt, /comment rm|comment clear/);
-  assert.match(prompt, /never|Never|not/);
+  assert.match(prompt, /comment rm/);
+  assert.match(prompt, /comment clear/);
+  // Pin the polarity, not just the words: /not/ also matches "note".
+  assert.match(prompt, /Never remove or clear/);
 });
 ```
 
@@ -1998,10 +2010,15 @@ import type { HunkNote } from "./types.ts";
  * bundled skill is adopted at startup and documents the flags; duplicating them
  * here would drift on every Hunk release.
  */
+/**
+ * Where a note hangs, in prose. Deliberately not spelled as `--new-line 42`:
+ * the anchor is data the agent needs, the flag that carries it is Hunk's to
+ * name, and a work list full of renamed flags is worse than one the agent
+ * translates itself using the adopted skill.
+ */
 function anchor(note: HunkNote): string {
   if (note.line === undefined) return note.filePath;
-  const flag = note.side === "old" ? "--old-line" : "--new-line";
-  return `${note.filePath} ${flag} ${note.line}`;
+  return `${note.filePath} line ${note.line} (${note.side} side)`;
 }
 
 export function renderWorkList(notes: HunkNote[]): string {
@@ -2020,7 +2037,7 @@ export function reviewPrompt(options: {
     "",
     "Work through the Hunk session commands, not the interactive TUI:",
     "",
-    "1. Read the file and hunk structure first with `session review --json`. It omits patch text on purpose.",
+    "1. Read the file and hunk structure first with `session review` in its structured form; it omits patch text on purpose.",
     "2. Pull raw diff text only for the files you actually need to read closely.",
     "3. Leave your findings as inline notes in one `comment apply` batch, each anchored to the file and line it is about.",
     "4. Navigate to the first note so the user lands where the review starts.",
@@ -2040,7 +2057,7 @@ export function fixPrompt(options: { sessionId: string; notes: HunkNote[]; autho
     "",
     renderWorkList(options.notes),
     "",
-    "For each one: make the change, then reply on the same file and line with `comment add`, using",
+    "For each one: make the change, then reply on the same file, side, and line with `comment add`, using",
     `\`--author ${options.author}\`, saying what you changed. The reply is how the user sees which notes you handled without rereading the diff.`,
     "",
     "Never remove or clear the user's notes — no `comment rm`, no `comment clear`. They decide when a note is done.",
