@@ -1093,6 +1093,13 @@ test("a raw target keeps the user's tokens verbatim, pathspec included", () => {
   assert.deepEqual(targetArgs(target), ["diff", "main...HEAD", "--", "src/ui"]);
 });
 
+test("a raw target keeps its own copy of the tokens", () => {
+  const tokens = ["main...HEAD"];
+  const target = rawTarget(tokens);
+  tokens.push("--", "src");
+  assert.deepEqual(targetArgs(target), ["diff", "main...HEAD"]);
+});
+
 test("a raw target that already names a Hunk command is not prefixed", () => {
   assert.deepEqual(targetArgs(rawTarget(["show", "HEAD~1"])), ["show", "HEAD~1"]);
   assert.deepEqual(targetArgs(rawTarget(["diff", "--staged"])), ["diff", "--staged"]);
@@ -1159,8 +1166,9 @@ export const TARGET_PRESETS: readonly PickerItem[] = [
   { value: "commit", label: "Review a commit", description: "" },
 ];
 
+/** Copies the tokens, so a caller reusing its parse buffer cannot mutate a stored target. */
 export function rawTarget(tokens: string[]): Target {
-  return { kind: "raw", tokens };
+  return { kind: "raw", tokens: [...tokens] };
 }
 
 const HUNK_COMMANDS = new Set(["diff", "show"]);
