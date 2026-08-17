@@ -53,7 +53,12 @@ export async function ensureSession(
   deps: SessionDeps,
   options: { target?: string[]; sessionId?: string },
 ): Promise<Resolution> {
-  if (options.sessionId) return { kind: "session", sessionId: options.sessionId };
+  if (options.sessionId) {
+    if (!options.target) return { kind: "session", sessionId: options.sessionId };
+    const reloaded = await deps.cli.reload(options.sessionId, options.target);
+    if (!reloaded.ok) return { kind: "none", message: reloaded.message };
+    return { kind: "session", sessionId: options.sessionId };
+  }
 
   const root = await deps.gitRoot();
   if (!root) {

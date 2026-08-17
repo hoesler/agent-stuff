@@ -55,6 +55,25 @@ test("an explicit session id is trusted without listing", async () => {
   assert.equal(listCalls(), 0);
 });
 
+test("an explicit session id combined with a target reloads that session onto it", async () => {
+  const { cli, reloads, listCalls } = fakeCli([{ ok: true, value: [] }]);
+  const result = await ensureSession(deps({ cli }), { sessionId: "abc", target: ["diff", "main...HEAD"] });
+  assert.deepEqual(result, { kind: "session", sessionId: "abc" });
+  assert.deepEqual(reloads, [{ sessionId: "abc", target: ["diff", "main...HEAD"] }]);
+  assert.equal(listCalls(), 0);
+});
+
+test("an explicit session id that fails to reload surfaces Hunk's own error", async () => {
+  const { cli, reloads } = fakeCli([{ ok: true, value: [] }], {
+    ok: false,
+    kind: "hunk-error",
+    message: "no such session: abc",
+  });
+  const result = await ensureSession(deps({ cli }), { sessionId: "abc", target: ["diff", "main...HEAD"] });
+  assert.deepEqual(result, { kind: "none", message: "no such session: abc" });
+  assert.equal(reloads.length, 1);
+});
+
 test("one matching session with no target is used as it stands", async () => {
   const { cli, reloads } = fakeCli([{ ok: true, value: [session("abc", "/work/repo")] }]);
   const result = await ensureSession(deps({ cli }), {});
