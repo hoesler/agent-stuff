@@ -111,6 +111,34 @@ test("a reply on a different line leaves its note unconfirmed", () => {
   assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
 });
 
+test("two notes on one line with a single reply leave both pending", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
+test("two notes on one line with two replies confirm both", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+    note({ noteId: "mcp:r2", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:01:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), ["u1", "u2"]);
+});
+
+test("a reply created exactly at the dispatch time does not count", () => {
+  const user = [note({ noteId: "u1" })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", createdAt: "2026-08-17T11:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
 test("nextAddressed unions and sorts, without duplicating", () => {
   assert.deepEqual(nextAddressed(new Set(["b"]), ["a", "b"]), ["a", "b"]);
 });

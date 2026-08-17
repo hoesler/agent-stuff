@@ -38,8 +38,9 @@ export function pendingNotes(notes: HunkNote[], addressed: ReadonlySet<string>):
   return notes.filter((note) => note.source === "user" && !addressed.has(note.noteId));
 }
 
-function sameAnchor(a: HunkNote, b: HunkNote): boolean {
-  return a.filePath === b.filePath && a.side === b.side && a.line === b.line;
+/** Identifies the place a note hangs on. ` ` cannot occur in a path. */
+function anchorKey(note: HunkNote): string {
+  return `${note.filePath} ${note.side} ${note.line ?? "?"}`;
 }
 
 /**
@@ -61,7 +62,27 @@ export function confirmAddressed(
       note.createdAt !== undefined &&
       note.createdAt > options.since,
   );
-  return userNotes.filter((note) => replies.some((reply) => sameAnchor(note, reply))).map((note) => note.noteId);
+
+  // Hunk allows several notes on one line, and a reply carries no reference to
+  // the note it answers. So notes are confirmed per anchor, and only when the
+  // replies there are at least as many as the notes: two questions answered
+  // once leaves both pending. Erring this way costs a re-offer; erring the
+  // other way buries a note the agent never answered, permanently, because the
+  // addressed set only ever grows.
+  const groups = new Map<string, HunkNote[]>();
+  for (const note of userNotes) {
+    const key = anchorKey(note);
+    const group = groups.get(key);
+    if (group) group.push(note);
+    else groups.set(key, [note]);
+  }
+
+  const confirmed: string[] = [];
+  for (const [key, group] of groups) {
+    const answered = replies.filter((reply) => anchorKey(reply) === key).length;
+    if (answered >= group.length) confirmed.push(...group.map((note) => note.noteId));
+  }
+  return confirmed;
 }
 
 export function nextAddressed(addressed: ReadonlySet<string>, confirmed: string[]): string[] {
