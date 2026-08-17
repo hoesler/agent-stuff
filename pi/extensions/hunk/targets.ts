@@ -26,8 +26,9 @@ export const TARGET_PRESETS: readonly PickerItem[] = [
   { value: "commit", label: "Review a commit", description: "" },
 ];
 
+/** Copies the tokens, so a caller reusing its parse buffer cannot mutate a stored target. */
 export function rawTarget(tokens: string[]): Target {
-  return { kind: "raw", tokens };
+  return { kind: "raw", tokens: [...tokens] };
 }
 
 const HUNK_COMMANDS = new Set(["diff", "show"]);
