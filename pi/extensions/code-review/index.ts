@@ -1465,7 +1465,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
 
 		const hunkSessionId = await findHunkSession(pi, ctx.cwd);
 		if (hunkSessionId) {
-			fullPrompt += `\n\nA Hunk review window is open on this repository (session \`${hunkSessionId}\`). As well as reporting findings here, leave each one as an inline note in that window with \`hunk session comment apply\`, anchored to the file and line it is about, so the findings land where the code is. Do not annotate every hunk, and never remove a note the user wrote.`;
+			fullPrompt += `\n\nA Hunk review window is open on this repository (session \`${hunkSessionId}\`). As well as reporting findings here, leave each one as an inline note in that window with \`hunk session comment apply\`, anchored to the file and line it is about, so the findings land where the code is. Run \`hunk skill path\` to find the skill that documents Hunk's CLI, and read it before writing notes. Do not annotate every hunk, and never remove a note the user wrote.`;
 		}
 
 		const modeHint = useFreshSession ? " (fresh session)" : "";
