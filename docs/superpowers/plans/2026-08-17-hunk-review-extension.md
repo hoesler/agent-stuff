@@ -399,7 +399,7 @@ Expected: PASS, 10 tests.
 In `package.json`, append `pi/extensions/hunk/*.test.ts` to the `test` script, keeping the existing entries and their order:
 
 ```json
-"test": "node --test pi/extensions/model-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts"
+"test": "node --test pi/extensions/agent-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts"
 ```
 
 - [ ] **Step 8: Verify the whole suite**
@@ -2028,7 +2028,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
       .map(([sha, title]) => ({ sha, title }));
   }
 
-  /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `model-modes` use. */
+  /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `agent-modes` use. */
   async function pick(ctx: ExtensionCommandContext, title: string, items: SelectItem[], selected: number) {
     if (items.length === 0) return undefined;
     return ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {

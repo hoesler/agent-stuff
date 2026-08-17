@@ -75,7 +75,7 @@ GitHub, Azure DevOps, and folder-snapshot paths, and the folder snapshot has no
 meaning for a diff viewer at all.
 
 What the extension does copy is the `ctx.ui.custom` plus `SelectList` idiom, which
-`code-review` and `model-modes` already use. Copying a UI idiom that appears twice
+`code-review` and `agent-modes` already use. Copying a UI idiom that appears twice
 is consistency with the package, not duplicated logic.
 
 ## Why the mechanics are not documented here
@@ -281,7 +281,7 @@ already does that, from inside or outside a review.
 
 ## Configuration
 
-Its own config file, following the `model-modes` and `session-title` precedent —
+Its own config file, following the `agent-modes` and `session-title` precedent —
 `resolveConfigPath`, strict parsing, and a snapshot that carries errors rather
 than swallowing them. The extension works with no config file at all.
 
