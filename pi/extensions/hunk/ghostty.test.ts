@@ -3,11 +3,11 @@ import { test } from "node:test";
 import type { Exec } from "./cli.ts";
 import { shellQuote, spawnWindow, startupInput } from "./ghostty.ts";
 
-function fakeExec(outcome: { stdout?: string; stderr?: string; code?: number }) {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const exec: Exec = async (command, args) => {
-    calls.push({ command, args });
-    return { stdout: outcome.stdout ?? "", stderr: outcome.stderr ?? "", code: outcome.code ?? 0 };
+function fakeExec(outcome: { stdout?: string; stderr?: string; code?: number; killed?: boolean }) {
+  const calls: Array<{ command: string; args: string[]; options?: { timeout?: number } }> = [];
+  const exec: Exec = async (command, args, options) => {
+    calls.push({ command, args, options });
+    return { stdout: outcome.stdout ?? "", stderr: outcome.stderr ?? "", code: outcome.code ?? 0, killed: outcome.killed };
   };
   return { exec, calls };
 }
@@ -53,6 +53,24 @@ test("a failing osascript reports its own stderr", async () => {
     { cwd: "/work", hunkBin: "hunk", target: ["diff"] },
   );
   assert.equal(!result.ok && result.message, "Ghostty got an error: not running");
+});
+
+test("osascript is given a timeout, so an unanswered consent dialog cannot wedge it forever", async () => {
+  const { exec, calls } = fakeExec({ code: 0 });
+  await spawnWindow({ exec, platform: "darwin" }, { cwd: "/work", hunkBin: "hunk", target: ["diff"] });
+  assert.ok(calls[0].options?.timeout && calls[0].options.timeout > 0, "a timeout must be passed to exec");
+});
+
+test("a killed osascript (e.g. a timed-out consent dialog) is a failure, not a code: 0 success", async () => {
+  // pi's own exec resolves a kill as `{ code: 0, killed: true }`, so `killed` must be checked
+  // before `code === 0` is trusted.
+  const { exec } = fakeExec({ code: 0, killed: true });
+  const result = await spawnWindow(
+    { exec, platform: "darwin" },
+    { cwd: "/work", hunkBin: "hunk", target: ["diff"] },
+  );
+  assert.equal(result.ok, false);
+  assert.match(!result.ok ? result.message : "", /did not respond|timed out/i);
 });
 
 test("an osascript that throws is reported, not raised", async () => {

@@ -59,7 +59,19 @@ export async function spawnWindow(
   }
   const input = startupInput(options.hunkBin, options.target);
   try {
-    const outcome = await deps.exec("osascript", ["-e", GHOSTTY_SPLIT_SCRIPT, "--", options.cwd, input]);
+    // macOS may show a one-time "pi wants to control Ghostty" consent dialog on
+    // the first automation; without a ceiling, an unanswered dialog blocks this
+    // call forever inside a command handler. A timeout degrades to the same
+    // "print the command" fallback as any other spawn failure.
+    const outcome = await deps.exec("osascript", ["-e", GHOSTTY_SPLIT_SCRIPT, "--", options.cwd, input], {
+      timeout: 15000,
+    });
+    // A killed process (the timeout above, most often) can still report
+    // `code: 0` — pi's own `exec` resolves a kill as `code ?? 0` — so `killed`
+    // must be checked before `code` is trusted as success.
+    if (outcome.killed) {
+      return { ok: false, message: "osascript did not respond within 15s (a Ghostty permission dialog may be waiting)." };
+    }
     if (outcome.code !== 0) {
       return { ok: false, message: outcome.stderr.trim() || outcome.stdout.trim() || "osascript failed" };
     }
