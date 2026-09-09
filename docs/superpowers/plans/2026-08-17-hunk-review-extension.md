@@ -84,7 +84,7 @@ Every other `hunk session …` command exits **1** with `hunk: <message>` on **s
 - Consumes: nothing.
 - Produces: `HunkConfig`, `SpawnMode`, `SPAWN_MODES`, `DEFAULTS`, `ConfigError`, `ConfigSnapshot`, `HunkSession`, `HunkNote`, `HunkFailure`, `HunkResult<T>` from `types.ts`; `resolveConfigPaths(options)`, `defaultConfig()`, `parseConfig(raw, path)`, `loadConfig(options)` from `config.ts`.
 
-- [ ] **Step 1: Create the per-extension tsconfig**
+- [x] **Step 1: Create the per-extension tsconfig**
 
 `pi/extensions/hunk/tsconfig.json` — byte-identical to `pi/extensions/session-search/tsconfig.json`:
 
@@ -100,7 +100,7 @@ Every other `hunk session …` command exits **1** with `hunk: <message>` on **s
 }
 ```
 
-- [ ] **Step 2: Write `types.ts`**
+- [x] **Step 2: Write `types.ts`**
 
 No test — types and constants only.
 
@@ -183,7 +183,7 @@ export interface HunkFailure {
 export type HunkResult<T> = { ok: true; value: T } | ({ ok: false } & HunkFailure);
 ```
 
-- [ ] **Step 3: Write the failing config tests**
+- [x] **Step 3: Write the failing config tests**
 
 `pi/extensions/hunk/config.test.ts`:
 
@@ -279,12 +279,12 @@ test("a malformed file reports the error and still yields a usable config", asyn
 });
 ```
 
-- [ ] **Step 4: Run the tests to verify they fail**
+- [x] **Step 4: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/config.test.ts`
 Expected: FAIL — cannot find module `./config.ts`.
 
-- [ ] **Step 5: Write `config.ts`**
+- [x] **Step 5: Write `config.ts`**
 
 ```ts
 import { readFile } from "node:fs/promises";
@@ -389,12 +389,12 @@ export async function loadConfig(options: ConfigPathOptions): Promise<ConfigSnap
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/config.test.ts`
 Expected: PASS, 10 tests.
 
-- [ ] **Step 7: Add the extension to the test script**
+- [x] **Step 7: Add the extension to the test script**
 
 In `package.json`, append `pi/extensions/hunk/*.test.ts` to the `test` script, keeping the existing entries and their order:
 
@@ -402,12 +402,12 @@ In `package.json`, append `pi/extensions/hunk/*.test.ts` to the `test` script, k
 "test": "node --test pi/extensions/agent-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts"
 ```
 
-- [ ] **Step 8: Verify the whole suite**
+- [x] **Step 8: Verify the whole suite**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add pi/extensions/hunk/tsconfig.json pi/extensions/hunk/types.ts \
@@ -427,7 +427,7 @@ git commit -m "feat(hunk): scaffold the extension with a config that works when 
 - Consumes: `HunkNote`, `HunkResult`, `HunkSession` from `types.ts`.
 - Produces: `Exec` (type), `ExecOutcome` (type), `hunkMessage(stderr)`, `parseSessions(stdout)`, `parseNotes(stdout)`, `createCli({ exec, hunkBin, cwd })` returning `HunkCli` with `listSessions()`, `reload(sessionId, target)`, `listNotes(sessionId, type)`, `skillPath()`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/cli.test.ts`:
 
@@ -587,12 +587,12 @@ test("skillPath returns the trimmed path Hunk prints", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/cli.test.ts`
 Expected: FAIL — cannot find module `./cli.ts`.
 
-- [ ] **Step 3: Write `cli.ts`**
+- [x] **Step 3: Write `cli.ts`**
 
 ```ts
 import type { HunkNote, HunkResult, HunkSession } from "./types.ts";
@@ -760,12 +760,12 @@ export function createCli(deps: { exec: Exec; hunkBin: string; cwd: string }): H
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/cli.test.ts`
 Expected: PASS, 14 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/cli.ts pi/extensions/hunk/cli.test.ts
@@ -784,7 +784,7 @@ git commit -m "feat(hunk): parse Hunk's JSON and pass its errors through unrewor
 - Consumes: `HunkNote` from `types.ts`.
 - Produces: `ADDRESSED_ENTRY` (the string `"hunk-addressed"`), `AddressedState`, `BranchEntry`, `restoreAddressed(entries)`, `pendingNotes(notes, addressed)`, `confirmAddressed(userNotes, allNotes, options)`, `nextAddressed(addressed, confirmed)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/pending.test.ts`:
 
@@ -935,12 +935,12 @@ test("nextAddressed unions and sorts, without duplicating", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/pending.test.ts`
 Expected: FAIL — cannot find module `./pending.ts`.
 
-- [ ] **Step 3: Write `pending.ts`**
+- [x] **Step 3: Write `pending.ts`**
 
 ```ts
 import type { HunkNote } from "./types.ts";
@@ -1039,12 +1039,12 @@ export function nextAddressed(addressed: ReadonlySet<string>, confirmed: string[
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/pending.test.ts`
 Expected: PASS, 12 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/pending.ts pi/extensions/hunk/pending.test.ts
@@ -1063,7 +1063,7 @@ git commit -m "feat(hunk): tell a new note from one already answered"
 - Consumes: nothing.
 - Produces: `Target` (discriminated union), `PickerItem`, `TARGET_PRESETS`, `targetArgs(target)`, `targetLabel(target)`, `rawTarget(tokens)`, `smartDefaultValue(dirty)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/targets.test.ts`:
 
@@ -1130,12 +1130,12 @@ test("a dirty tree preselects the working tree, a clean one the base branch", ()
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/targets.test.ts`
 Expected: FAIL — cannot find module `./targets.ts`.
 
-- [ ] **Step 3: Write `targets.ts`**
+- [x] **Step 3: Write `targets.ts`**
 
 ```ts
 /**
@@ -1210,12 +1210,12 @@ export function smartDefaultValue(dirty: boolean): PresetValue {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/targets.test.ts`
 Expected: PASS, 10 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/targets.ts pi/extensions/hunk/targets.test.ts
@@ -1234,7 +1234,7 @@ git commit -m "feat(hunk): let Hunk own the target grammar"
 - Consumes: `Target`, `rawTarget` from `targets.ts`.
 - Produces: `ParsedCommand` (union of `{ mode: "auto" | "review" | "fix"; target?: Target; sessionId?: string }` and `{ error: string }`), `parseCommand(args)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/args.test.ts`:
 
@@ -1299,12 +1299,12 @@ test("a bare --session still leaves auto mode when nothing else is given", () =>
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/args.test.ts`
 Expected: FAIL — cannot find module `./args.ts`.
 
-- [ ] **Step 3: Write `args.ts`**
+- [x] **Step 3: Write `args.ts`**
 
 ```ts
 import { rawTarget, type Target } from "./targets.ts";
@@ -1356,12 +1356,12 @@ export function parseCommand(args: string): ParsedCommand {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/args.test.ts`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/args.ts pi/extensions/hunk/args.test.ts
@@ -1380,7 +1380,7 @@ git commit -m "feat(hunk): parse one command into three modes"
 - Consumes: `Exec` from `cli.ts`.
 - Produces: `GHOSTTY_SPLIT_SCRIPT`, `shellQuote(value)`, `startupInput(hunkBin, target)`, `spawnWindow(deps, options)` returning `{ ok: true } | { ok: false; message: string }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/ghostty.test.ts`:
 
@@ -1454,12 +1454,12 @@ test("an osascript that throws is reported, not raised", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/ghostty.test.ts`
 Expected: FAIL — cannot find module `./ghostty.ts`.
 
-- [ ] **Step 3: Write `ghostty.ts`**
+- [x] **Step 3: Write `ghostty.ts`**
 
 ```ts
 import type { Exec } from "./cli.ts";
@@ -1534,12 +1534,12 @@ export async function spawnWindow(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/ghostty.test.ts`
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/ghostty.ts pi/extensions/hunk/ghostty.test.ts
@@ -1558,7 +1558,7 @@ git commit -m "feat(hunk): open a review beside pi in a Ghostty split"
 - Consumes: `HunkCli` from `cli.ts`, `SpawnOutcome` from `ghostty.ts`, `HunkSession` from `types.ts`.
 - Produces: `POLL_INTERVAL_MS` (200), `POLL_CEILING_MS` (5000), `SessionDeps`, `Resolution` (union of `{ kind: "session"; sessionId: string }`, `{ kind: "ambiguous"; sessionIds: string[] }`, `{ kind: "none"; message: string }`), `ensureSession(deps, options)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/session.test.ts`:
 
@@ -1758,12 +1758,12 @@ test("a poll that never finds the window gives up instead of hanging", async () 
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/session.test.ts`
 Expected: FAIL — cannot find module `./session.ts`.
 
-- [ ] **Step 3: Write `session.ts`**
+- [x] **Step 3: Write `session.ts`**
 
 ```ts
 import type { HunkCli } from "./cli.ts";
@@ -1882,17 +1882,17 @@ export async function ensureSession(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/session.test.ts`
 Expected: PASS, 13 tests.
 
-- [ ] **Step 5: Verify the whole suite**
+- [x] **Step 5: Verify the whole suite**
 
 Run: `npm run typecheck && npm test`
 Expected: both PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pi/extensions/hunk/session.ts pi/extensions/hunk/session.test.ts
@@ -1911,7 +1911,7 @@ git commit -m "feat(hunk): reuse the window that is open before opening another"
 - Consumes: `HunkNote` from `types.ts`.
 - Produces: `renderWorkList(notes)`, `reviewPrompt(options)`, `fixPrompt(options)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `pi/extensions/hunk/prompts.test.ts`:
 
@@ -1995,12 +1995,12 @@ test("the fix prompt forbids removing the user's notes", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test pi/extensions/hunk/prompts.test.ts`
 Expected: FAIL — cannot find module `./prompts.ts`.
 
-- [ ] **Step 3: Write `prompts.ts`**
+- [x] **Step 3: Write `prompts.ts`**
 
 ```ts
 import type { HunkNote } from "./types.ts";
@@ -2067,12 +2067,12 @@ export function fixPrompt(options: { sessionId: string; notes: HunkNote[]; autho
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test pi/extensions/hunk/prompts.test.ts`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/hunk/prompts.ts pi/extensions/hunk/prompts.test.ts
@@ -2091,7 +2091,7 @@ git commit -m "feat(hunk): carry workflow in the prompts and leave syntax to Hun
 - Consumes: everything produced by Tasks 1–8.
 - Produces: the extension's default export, `export default function hunkExtension(pi: ExtensionAPI)`.
 
-- [ ] **Step 1: Write `index.ts`**
+- [x] **Step 1: Write `index.ts`**
 
 ```ts
 import { readFile, realpath } from "node:fs/promises";
@@ -2418,17 +2418,17 @@ export default function hunkExtension(pi: ExtensionAPI) {
 }
 ```
 
-- [ ] **Step 2: Typecheck**
+- [x] **Step 2: Typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS. If `ctx.ui.custom`'s generic or `SelectList`'s constructor disagrees, compare against the working call in `pi/extensions/code-review/index.ts:964` and match it exactly rather than casting.
 
-- [ ] **Step 3: Run the whole suite**
+- [x] **Step 3: Run the whole suite**
 
 Run: `npm test`
 Expected: PASS — no test targets `index.ts`, but nothing may regress.
 
-- [ ] **Step 4: (resolved — no action)**
+- [x] **Step 4: (resolved — no action)**
 
 The spec's remaining unknown was whether `skillPaths` wants the skill's directory or its parent. Answered from pi's own loader rather than by experiment: `core/skills.js` resolves each entry with `statSync` and accepts **either** a directory (recursively scanned) **or** a file ending in `.md`. So the printed `SKILL.md` path is passed verbatim, as the handler above now does. Nothing to run here.
 
@@ -2441,7 +2441,7 @@ pi -e pi/extensions/hunk/index.ts     # then: /hunk review
 
 Expected: the command finds the live window without spawning a second one, reloads it onto the chosen target, and the agent leaves inline notes. Then leave a note of your own in the TUI, and run `/hunk`: it must dispatch to fix mode, and running `/hunk` again afterwards must report no new notes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pi/extensions/hunk/index.ts
@@ -2460,7 +2460,7 @@ git commit -m "feat(hunk): one command that reviews a changeset or answers its n
 - Consumes: nothing.
 - Produces: nothing.
 
-- [ ] **Step 1: Write the extension README**
+- [x] **Step 1: Write the extension README**
 
 `pi/extensions/hunk/README.md`. Follow the shape of `pi/extensions/tool-catalog/README.md`: what it does, usage, configuration table, and what it deliberately leaves out. Cover:
 
@@ -2472,7 +2472,7 @@ git commit -m "feat(hunk): one command that reviews a changeset or answers its n
 - Requirements: Hunk 0.18.2+, and Ghostty plus macOS only for spawning.
 - Attribution: the Ghostty split is adapted from `mitsuhiko/agent-stuff`'s `split-fork.ts`.
 
-- [ ] **Step 2: Add the row to the root README**
+- [x] **Step 2: Add the row to the root README**
 
 In `README.md`, add to the Extensions table, after the `code-review` row:
 
@@ -2480,7 +2480,7 @@ In `README.md`, add to the Extensions table, after the `code-review` row:
 | [`hunk`](pi/extensions/hunk) | One `/hunk` command over a live [Hunk](https://www.hunk.dev) diff window: it reviews a changeset and leaves findings as inline notes, or collects the notes you left there and addresses them, replying on each line. Reuses the window you have open, and adopts Hunk's own agent skill so its CLI knowledge tracks the installed binary. |
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add pi/extensions/hunk/README.md README.md
@@ -2501,7 +2501,7 @@ git commit -m "docs(hunk): document the command, the config, and what it leaves 
 
 **This file is tab-indented. Use tabs.**
 
-- [ ] **Step 1: Add the probe helper**
+- [x] **Step 1: Add the probe helper**
 
 Insert next to the other module-level helpers in `pi/extensions/code-review/index.ts`, immediately before `async function loadProjectReviewGuidelines` (line 281):
 
@@ -2532,7 +2532,7 @@ async function findHunkSession(pi: ExtensionAPI, cwd: string): Promise<string | 
 }
 ```
 
-- [ ] **Step 2: Add the prompt fragment**
+- [x] **Step 2: Add the prompt fragment**
 
 In the review dispatch path, after the `if (projectGuidelines) { … }` block and before `const modeHint`:
 
@@ -2543,7 +2543,7 @@ In the review dispatch path, after the `if (projectGuidelines) { … }` block an
 		}
 ```
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS.
@@ -2557,7 +2557,7 @@ pi                                    # then: /review uncommitted
 
 Expected: the prompt carries no Hunk paragraph and the review runs exactly as before. Then open `hunk diff` in a second terminal and repeat: the paragraph appears, naming the live session id.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pi/extensions/code-review/index.ts
