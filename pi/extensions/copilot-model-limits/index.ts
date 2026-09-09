@@ -25,17 +25,25 @@
 
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { sharedModelHeaders } from "./headers.ts";
 import { createCopilotModelRefresh } from "./refresh.ts";
 
 const PROVIDER = "github-copilot";
 
 export default function copilotModelLimits(pi: ExtensionAPI) {
-  const refreshModels = createCopilotModelRefresh({
-    builtInModels: () => getBuiltinModels(PROVIDER) as unknown as ProviderModelConfig[],
-  });
+  const builtInModels = () => getBuiltinModels(PROVIDER) as unknown as ProviderModelConfig[];
 
   // No baseUrl and no apiKey: overriding a built-in provider inherits both its
   // auth methods, and the placeholder key the previous version passed now
   // composes into a real api-key method that fails to resolve.
-  pi.registerProvider(PROVIDER, { refreshModels });
+  //
+  // The headers, on the other hand, have to be said again. pi rebuilds every
+  // model a refreshModels returns with `headers: undefined`, and Copilot
+  // answers a request that arrives without `Editor-Version` with a 400. Lifting
+  // them to the provider, where pi merges them into the resolved auth, is what
+  // keeps the models this extension touched usable at all.
+  pi.registerProvider(PROVIDER, {
+    headers: sharedModelHeaders(builtInModels()),
+    refreshModels: createCopilotModelRefresh({ builtInModels }),
+  });
 }

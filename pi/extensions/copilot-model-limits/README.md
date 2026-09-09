@@ -33,6 +33,14 @@ be read should not look read.
 
 ## Notes for the next person
 
+A `refreshModels` has to hand the Copilot request headers back. pi rebuilds
+every model an extension returns with `headers: undefined`, and the Copilot API
+answers a request that arrives without `Editor-Version` with
+`400 bad request: missing Editor-Version header for IDE auth`. The extension
+registers a provider-level `headers`, copied off pi's own catalog, which pi
+merges into the resolved auth for every request. Refreshing the limits and
+leaving the headers behind makes every model it touched unusable.
+
 Reach pi-ai only through the specifiers pi aliases for extensions
 (`@earendil-works/pi-ai`, `/compat`, `/oauth`, `/providers/all`). Locating the
 package by path — `import.meta.resolve("@earendil-works/pi-ai")` — does not
