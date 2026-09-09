@@ -399,7 +399,7 @@ Expected: PASS, 10 tests.
 In `package.json`, append `pi/extensions/hunk/*.test.ts` to the `test` script, keeping the existing entries and their order:
 
 ```json
-"test": "node --test pi/extensions/model-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts"
+"test": "node --test pi/extensions/agent-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts"
 ```
 
 - [ ] **Step 8: Verify the whole suite**
@@ -542,10 +542,19 @@ test("a non-zero exit surfaces Hunk's own message", async () => {
   assert.equal(!result.ok && result.message, "No diff file matches b.ts");
 });
 
-test("an ENOENT stderr is reported as a missing binary", async () => {
-  const { exec } = fakeExec([{ stderr: "spawn hunk ENOENT", code: 1 }]);
+test("a failure with no output at all is reported as a missing binary", async () => {
+  // This is exactly the shape pi's exec resolves for a spawn failure.
+  const { exec } = fakeExec([{ stdout: "", stderr: "", code: 1 }]);
   const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listSessions();
   assert.equal(!result.ok && result.kind, "missing-binary");
+  assert.match(!result.ok ? result.message : "", /installed and on PATH/);
+});
+
+test("a real Hunk error that mentions a missing file stays a Hunk error", async () => {
+  const { exec } = fakeExec([{ stderr: "hunk: No such file or directory: nope.md", code: 1 }]);
+  const result = await createCli({ exec, hunkBin: "hunk", cwd: "/work" }).listNotes("abc", "user");
+  assert.equal(!result.ok && result.kind, "hunk-error");
+  assert.equal(!result.ok && result.message, "No such file or directory: nope.md");
 });
 
 test("an exec that throws is reported as a missing binary, not a crash", async () => {
@@ -611,6 +620,12 @@ export function hunkMessage(stderr: string): string {
   return trimmed.startsWith("hunk:") ? trimmed.slice("hunk:".length).trim() : trimmed;
 }
 
+/**
+ * Whether a *thrown* spawn error names a missing executable. Only the throw
+ * path needs this: pi's own `exec` never throws, so this serves other `Exec`
+ * implementations. It is deliberately not applied to a failed command's output
+ * — see `run`.
+ */
 function looksMissing(text: string): boolean {
   return /ENOENT|command not found|No such file or directory/i.test(text);
 }
@@ -709,11 +724,19 @@ export function createCli(deps: { exec: Exec; hunkBin: string; cwd: string }): H
       return { ok: false, kind: looksMissing(message) ? "missing-binary" : "hunk-error", message };
     }
     if (outcome.code === 0) return { ok: true, value: outcome.stdout };
-    const combined = `${outcome.stderr}\n${outcome.stdout}`;
-    if (looksMissing(combined)) {
-      return { ok: false, kind: "missing-binary", message: `${deps.hunkBin} is not installed or not on PATH` };
+    // pi's `exec` resolves a spawn failure as `{stdout:"", stderr:"", code:1}`,
+    // discarding the ENOENT, so blank output on a failure is the only signal
+    // that the binary never ran — Hunk itself always prints a message. Matching
+    // the text instead would misread a real Hunk error that happens to mention
+    // a missing file, and would send the user to reinstall Hunk over a bad path.
+    if (!outcome.stderr.trim() && !outcome.stdout.trim()) {
+      return {
+        ok: false,
+        kind: "missing-binary",
+        message: `\`${deps.hunkBin}\` failed without output. Check that Hunk is installed and on PATH.`,
+      };
     }
-    return { ok: false, kind: "hunk-error", message: hunkMessage(outcome.stderr) || "hunk failed with no message" };
+    return { ok: false, kind: "hunk-error", message: hunkMessage(outcome.stderr) || hunkMessage(outcome.stdout) };
   }
 
   return {
@@ -879,6 +902,34 @@ test("a reply on a different line leaves its note unconfirmed", () => {
   assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
 });
 
+test("two notes on one line with a single reply leave both pending", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
+test("two notes on one line with two replies confirm both", () => {
+  const user = [note({ noteId: "u1", filePath: "a.ts", line: 10 }), note({ noteId: "u2", filePath: "a.ts", line: 10 })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:00:00.000Z" }),
+    note({ noteId: "mcp:r2", source: "agent", author: "pi", filePath: "a.ts", line: 10, createdAt: "2026-08-17T12:01:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), ["u1", "u2"]);
+});
+
+test("a reply created exactly at the dispatch time does not count", () => {
+  const user = [note({ noteId: "u1" })];
+  const all = [
+    ...user,
+    note({ noteId: "mcp:r1", source: "agent", author: "pi", createdAt: "2026-08-17T11:00:00.000Z" }),
+  ];
+  assert.deepEqual(confirmAddressed(user, all, { author: "pi", since: "2026-08-17T11:00:00.000Z" }), []);
+});
+
 test("nextAddressed unions and sorts, without duplicating", () => {
   assert.deepEqual(nextAddressed(new Set(["b"]), ["a", "b"]), ["a", "b"]);
 });
@@ -932,8 +983,13 @@ export function pendingNotes(notes: HunkNote[], addressed: ReadonlySet<string>):
   return notes.filter((note) => note.source === "user" && !addressed.has(note.noteId));
 }
 
-function sameAnchor(a: HunkNote, b: HunkNote): boolean {
-  return a.filePath === b.filePath && a.side === b.side && a.line === b.line;
+/**
+ * Identifies the place a note hangs on. Joined on NUL, written as an escape so
+ * the separator survives being copied: a raw NUL byte in this document made it
+ * unsearchable and reached an implementer as a plain space.
+ */
+function anchorKey(note: HunkNote): string {
+  return [note.filePath, note.side, note.line ?? "?"].join("\u0000");
 }
 
 /**
@@ -955,7 +1011,27 @@ export function confirmAddressed(
       note.createdAt !== undefined &&
       note.createdAt > options.since,
   );
-  return userNotes.filter((note) => replies.some((reply) => sameAnchor(note, reply))).map((note) => note.noteId);
+
+  // Hunk allows several notes on one line, and a reply carries no reference to
+  // the note it answers. So notes are confirmed per anchor, and only when the
+  // replies there are at least as many as the notes: two questions answered
+  // once leaves both pending. Erring this way costs a re-offer; erring the
+  // other way buries a note the agent never answered, permanently, because the
+  // addressed set only ever grows.
+  const groups = new Map<string, HunkNote[]>();
+  for (const note of userNotes) {
+    const key = anchorKey(note);
+    const group = groups.get(key);
+    if (group) group.push(note);
+    else groups.set(key, [note]);
+  }
+
+  const confirmed: string[] = [];
+  for (const [key, group] of groups) {
+    const answered = replies.filter((reply) => anchorKey(reply) === key).length;
+    if (answered >= group.length) confirmed.push(...group.map((note) => note.noteId));
+  }
+  return confirmed;
 }
 
 export function nextAddressed(addressed: ReadonlySet<string>, confirmed: string[]): string[] {
@@ -1015,6 +1091,13 @@ test("a commit is a show", () => {
 test("a raw target keeps the user's tokens verbatim, pathspec included", () => {
   const target = rawTarget(["main...HEAD", "--", "src/ui"]);
   assert.deepEqual(targetArgs(target), ["diff", "main...HEAD", "--", "src/ui"]);
+});
+
+test("a raw target keeps its own copy of the tokens", () => {
+  const tokens = ["main...HEAD"];
+  const target = rawTarget(tokens);
+  tokens.push("--", "src");
+  assert.deepEqual(targetArgs(target), ["diff", "main...HEAD"]);
 });
 
 test("a raw target that already names a Hunk command is not prefixed", () => {
@@ -1083,8 +1166,9 @@ export const TARGET_PRESETS: readonly PickerItem[] = [
   { value: "commit", label: "Review a commit", description: "" },
 ];
 
+/** Copies the tokens, so a caller reusing its parse buffer cannot mutate a stored target. */
 export function rawTarget(tokens: string[]): Target {
-  return { kind: "raw", tokens };
+  return { kind: "raw", tokens: [...tokens] };
 }
 
 const HUNK_COMMANDS = new Set(["diff", "show"]);
@@ -1204,6 +1288,10 @@ test("--session is lifted out of any position", () => {
 
 test("--session with no value is an error", () => {
   assert.deepEqual(parseCommand("--session"), { error: "--session needs a session id." });
+});
+
+test("a repeated --session takes the last one", () => {
+  assert.deepEqual(parseCommand("--session abc --session def"), { mode: "auto", sessionId: "def" });
 });
 
 test("a bare --session still leaves auto mode when nothing else is given", () => {
@@ -1637,6 +1725,30 @@ test("a failed spawn hands the user the command to run", async () => {
   assert.match(message, /hunk diff --staged/);
 });
 
+test("a realpath that throws falls back to comparing the paths as given", async () => {
+  const { cli } = fakeCli([{ ok: true, value: [session("abc", "/work/repo")] }]);
+  const result = await ensureSession(
+    deps({
+      cli,
+      realpath: async () => {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    }),
+    {},
+  );
+  assert.deepEqual(result, { kind: "session", sessionId: "abc" });
+});
+
+test("a poll that keeps failing names the failure instead of blaming registration", async () => {
+  const { cli } = fakeCli([
+    { ok: true, value: [] },
+    { ok: false, kind: "hunk-error", message: "daemon socket closed" },
+  ]);
+  const result = await ensureSession(deps({ cli }), { target: ["diff"] });
+  assert.equal(result.kind, "none");
+  assert.match(result.kind === "none" ? result.message : "", /daemon socket closed/);
+});
+
 test("a poll that never finds the window gives up instead of hanging", async () => {
   const { cli, listCalls } = fakeCli([{ ok: true, value: [] }]);
   const result = await ensureSession(deps({ cli }), { target: ["diff"] });
@@ -1745,18 +1857,27 @@ export async function ensureSession(
     };
   }
 
+  // A failing poll is not fatal — the daemon may not be listening yet — but the
+  // last failure is kept, because "did not register" misdescribes a `hunk` that
+  // has started erroring, and sending the user to re-run would waste their time.
   const deadline = deps.now() + POLL_CEILING_MS;
+  let lastPollError: string | undefined;
   while (deps.now() < deadline) {
     await deps.sleep(POLL_INTERVAL_MS);
     const polled = await deps.cli.listSessions();
-    if (!polled.ok) continue;
+    if (!polled.ok) {
+      lastPollError = polled.message;
+      continue;
+    }
     const found = await matching(deps, polled.value, root);
     if (found.length > 0) return { kind: "session", sessionId: found[0].sessionId };
   }
 
   return {
     kind: "none",
-    message: "The Hunk window opened but did not register within 5s. Run /hunk again.",
+    message: lastPollError
+      ? `The Hunk window opened but could not be reached: ${lastPollError}`
+      : `The Hunk window opened but did not register within ${POLL_CEILING_MS / 1000}s. Run /hunk again.`,
   };
 }
 ```
@@ -1816,12 +1937,22 @@ function note(overrides: Partial<HunkNote> & { noteId: string }): HunkNote {
 test("the work list anchors each note to a file, side, and line", () => {
   const rendered = renderWorkList([note({ noteId: "live:1" })]);
   assert.match(rendered, /src\/a\.ts/);
-  assert.match(rendered, /--new-line 42/);
+  assert.match(rendered, /line 42 \(new side\)/);
   assert.match(rendered, /this leaks a handle/);
+  assert.doesNotMatch(rendered, /--new-line|--old-line/);
 });
 
-test("an old-side note is rendered with the old-line flag", () => {
-  assert.match(renderWorkList([note({ noteId: "live:2", side: "old", line: 7 })]), /--old-line 7/);
+test("an old-side note names the old side", () => {
+  assert.match(renderWorkList([note({ noteId: "live:2", side: "old", line: 7 })]), /line 7 \(old side\)/);
+});
+
+test("a multi-line body stays indented under its own number", () => {
+  const rendered = renderWorkList([
+    note({ noteId: "live:4", body: "this leaks\nand it is load bearing" }),
+    note({ noteId: "live:5", body: "second" }),
+  ]);
+  assert.match(rendered, /1\. .*\n   this leaks\n   and it is load bearing/);
+  assert.match(rendered, /2\. /);
 });
 
 test("a note with no line still appears, without inventing one", () => {
@@ -1857,8 +1988,10 @@ test("the fix prompt carries the notes and the author to reply as", () => {
 
 test("the fix prompt forbids removing the user's notes", () => {
   const prompt = fixPrompt({ sessionId: "abc", notes: [note({ noteId: "live:1" })], author: "pi" });
-  assert.match(prompt, /comment rm|comment clear/);
-  assert.match(prompt, /never|Never|not/);
+  assert.match(prompt, /comment rm/);
+  assert.match(prompt, /comment clear/);
+  // Pin the polarity, not just the words: /not/ also matches "note".
+  assert.match(prompt, /Never remove or clear/);
 });
 ```
 
@@ -1877,10 +2010,15 @@ import type { HunkNote } from "./types.ts";
  * bundled skill is adopted at startup and documents the flags; duplicating them
  * here would drift on every Hunk release.
  */
+/**
+ * Where a note hangs, in prose. Deliberately not spelled as `--new-line 42`:
+ * the anchor is data the agent needs, the flag that carries it is Hunk's to
+ * name, and a work list full of renamed flags is worse than one the agent
+ * translates itself using the adopted skill.
+ */
 function anchor(note: HunkNote): string {
   if (note.line === undefined) return note.filePath;
-  const flag = note.side === "old" ? "--old-line" : "--new-line";
-  return `${note.filePath} ${flag} ${note.line}`;
+  return `${note.filePath} line ${note.line} (${note.side} side)`;
 }
 
 export function renderWorkList(notes: HunkNote[]): string {
@@ -1899,7 +2037,7 @@ export function reviewPrompt(options: {
     "",
     "Work through the Hunk session commands, not the interactive TUI:",
     "",
-    "1. Read the file and hunk structure first with `session review --json`. It omits patch text on purpose.",
+    "1. Read the file and hunk structure first with `session review` in its structured form; it omits patch text on purpose.",
     "2. Pull raw diff text only for the files you actually need to read closely.",
     "3. Leave your findings as inline notes in one `comment apply` batch, each anchored to the file and line it is about.",
     "4. Navigate to the first note so the user lands where the review starts.",
@@ -1919,7 +2057,7 @@ export function fixPrompt(options: { sessionId: string; notes: HunkNote[]; autho
     "",
     renderWorkList(options.notes),
     "",
-    "For each one: make the change, then reply on the same file and line with `comment add`, using",
+    "For each one: make the change, then reply on the same file, side, and line with `comment add`, using",
     `\`--author ${options.author}\`, saying what you changed. The reply is how the user sees which notes you handled without rereading the diff.`,
     "",
     "Never remove or clear the user's notes — no `comment rm`, no `comment clear`. They decide when a note is done.",
@@ -1973,7 +2111,7 @@ import {
   type AddressedState,
 } from "./pending.ts";
 import { fixPrompt, reviewPrompt } from "./prompts.ts";
-import { ensureSession } from "./session.ts";
+import { ensureSession, type Resolution } from "./session.ts";
 import {
   smartDefaultValue,
   TARGET_PRESETS,
@@ -2028,7 +2166,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
       .map(([sha, title]) => ({ sha, title }));
   }
 
-  /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `model-modes` use. */
+  /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `agent-modes` use. */
   async function pick(ctx: ExtensionCommandContext, title: string, items: SelectItem[], selected: number) {
     if (items.length === 0) return undefined;
     return ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
@@ -2123,13 +2261,14 @@ export default function hunkExtension(pi: ExtensionAPI) {
     );
   }
 
-  function reportUnresolved(ctx: ExtensionCommandContext, resolution: { kind: string; [key: string]: unknown }) {
+  /** Takes the non-session arms only, so the union stays discriminated. */
+  function reportUnresolved(ctx: ExtensionCommandContext, resolution: Exclude<Resolution, { kind: "session" }>) {
     if (resolution.kind === "ambiguous") {
-      const ids = (resolution.sessionIds as string[]).join(", ");
+      const ids = resolution.sessionIds.join(", ");
       ctx.ui.notify(`Several Hunk windows show this repository: ${ids}. Re-run with --session <id>.`, "warning");
       return;
     }
-    ctx.ui.notify(String(resolution.message), "warning");
+    ctx.ui.notify(resolution.message, "warning");
   }
 
   /** The same file `/review` reads, so guidelines written once apply to both. */
@@ -2144,7 +2283,10 @@ export default function hunkExtension(pi: ExtensionAPI) {
 
   async function startReview(ctx: ExtensionCommandContext, target: Target, sessionId: string | undefined) {
     const resolution = await resolve(ctx, target, sessionId);
-    if (resolution.kind !== "session") return reportUnresolved(ctx, resolution);
+    if (resolution.kind !== "session") {
+      reportUnresolved(ctx, resolution);
+      return;
+    }
     ctx.ui.notify(`Reviewing ${targetLabel(target)} in Hunk.`, "info");
     pi.sendUserMessage(
       reviewPrompt({
@@ -2155,23 +2297,38 @@ export default function hunkExtension(pi: ExtensionAPI) {
     );
   }
 
-  async function startFix(ctx: ExtensionCommandContext, sessionId: string | undefined, explicit: boolean) {
+  /**
+   * `undefined` means fix mode could not even look; `{ empty: true }` means it
+   * looked and found nothing new. Auto mode needs those apart: only the second
+   * should fall through to a review.
+   */
+  async function startFix(
+    ctx: ExtensionCommandContext,
+    sessionId: string | undefined,
+    explicit: boolean,
+  ): Promise<{ empty: boolean } | undefined> {
     const resolution = await resolve(ctx, undefined, sessionId);
-    if (resolution.kind !== "session") return reportUnresolved(ctx, resolution);
+    if (resolution.kind !== "session") {
+      if (explicit) reportUnresolved(ctx, resolution);
+      return undefined;
+    }
 
     const notes = await cliFor(ctx.cwd).listNotes(resolution.sessionId, "user");
-    if (!notes.ok) return ctx.ui.notify(notes.message, "error");
+    if (!notes.ok) {
+      ctx.ui.notify(notes.message, "error");
+      return undefined;
+    }
 
     const pending = pendingNotes(notes.value, restoreAddressed(ctx.sessionManager.getBranch()));
     if (pending.length === 0) {
       if (explicit) ctx.ui.notify("No new notes in the Hunk window.", "info");
-      return { empty: true } as const;
+      return { empty: true };
     }
 
     outstandingFix = { sessionId: resolution.sessionId, notes: pending, since: new Date().toISOString() };
     ctx.ui.notify(`Addressing ${pending.length} note${pending.length === 1 ? "" : "s"} from Hunk.`, "info");
     pi.sendUserMessage(fixPrompt({ sessionId: resolution.sessionId, notes: pending, author: config.noteAuthor }));
-    return { empty: false } as const;
+    return { empty: false };
   }
 
   /**
@@ -2181,7 +2338,10 @@ export default function hunkExtension(pi: ExtensionAPI) {
   pi.on("resources_discover", async () => {
     const path = await createCli({ exec, hunkBin: config.hunkBin, cwd: process.cwd() }).skillPath();
     if (!path.ok || !path.value) return {};
-    return { skillPaths: [dirname(path.value)] };
+    // pi's loader takes either a directory or a markdown file (core/skills.js),
+    // so the printed SKILL.md path goes in verbatim: exact, and it cannot pick
+    // up whatever else a future Hunk release ships alongside it.
+    return { skillPaths: [path.value] };
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -2268,16 +2428,9 @@ Expected: PASS. If `ctx.ui.custom`'s generic or `SelectList`'s constructor disag
 Run: `npm test`
 Expected: PASS — no test targets `index.ts`, but nothing may regress.
 
-- [ ] **Step 4: Verify the skill path granularity against a running pi**
+- [ ] **Step 4: (resolved — no action)**
 
-This is the spec's one remaining unknown: whether `skillPaths` wants the skill's directory or its parent.
-
-```bash
-hunk skill path                       # note the printed path
-pi -e pi/extensions/hunk/index.ts     # then, inside pi, run: /skills
-```
-
-Expected: a `hunk-review` skill is listed. If it is not, change the `resources_discover` handler to return `dirname(dirname(path.value))` — the parent of the skill directory — and check again. Record whichever works in a comment on that handler.
+The spec's remaining unknown was whether `skillPaths` wants the skill's directory or its parent. Answered from pi's own loader rather than by experiment: `core/skills.js` resolves each entry with `statSync` and accepts **either** a directory (recursively scanned) **or** a file ending in `.md`. So the printed `SKILL.md` path is passed verbatim, as the handler above now does. Nothing to run here.
 
 - [ ] **Step 5: Smoke-test both modes against a real window**
 
