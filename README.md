@@ -21,7 +21,7 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | [`tool-catalog`](pi/extensions/tool-catalog) | `/tools` lists every registered tool, named by the extension that registered it — or `builtin`/`sdk` for pi's own — with its description, package, defining file, and whether it is in this turn's schema. Rows pin `on`/`off` or stay `auto`, so an extension that activates its own tools keeps doing so. Intent persists per session branch. |
 | [`code-review`](pi/extensions/code-review) | A review workflow over uncommitted, committed, or branch changes, via `/review` and `/end-review`. Forked from [pi-review](https://github.com/earendil-works/pi-review). |
 | [`copilot-usage`](pi/extensions/copilot-usage) | Reports remaining GitHub Copilot premium requests through `/copilot-usage`, reusing pi's own Copilot OAuth token. |
-| [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Corrects the context-window and max-output limits pi ships for Copilot models by reading them from the Copilot API at startup. A stopgap until [pi#2527](https://github.com/earendil-works/pi/pull/2527) ships. |
+| [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Refreshes the context-window and max-output limits pi holds for Copilot models with the ones the Copilot API reports for your account. Limits only: which models you may use is pi's own job since 0.85. |
 
 Each extension documents its own configuration in its README.
 

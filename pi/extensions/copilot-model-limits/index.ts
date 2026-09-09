@@ -1,299 +1,41 @@
 /**
  * GitHub Copilot Model Limits Extension
  *
- * Fetches actual context window and max output token limits from the GitHub
- * Copilot /models API at startup, overriding the incorrect static values
- * from models.dev that pi ships with.
+ * pi ships static context-window and max-output values for Copilot models,
+ * generated from models.dev. The Copilot /models API reports what the signed-in
+ * account may actually use. This extension refreshes pi's catalog with those
+ * numbers, so a long session is measured against the real window.
  *
- * This is a stopgap until https://github.com/earendil-works/pi/pull/2527 lands
- * in a pi release, which implements the same fix in pi-core.
+ * Limits only. Which models the account may use is pi's own job since 0.85: the
+ * built-in Copilot provider filters the catalog by the account's available model
+ * ids, taken from this same endpoint when the OAuth token is refreshed.
  *
- * The extension:
- * 1. Reads the Copilot OAuth token from ~/.pi/agent/auth.json
- * 2. Fetches model capabilities from the Copilot /models API
- * 3. Patches the built-in github-copilot models with correct contextWindow/maxTokens
- * 4. Only uses picker-enabled models from the API for limit lookups
+ * Both of the pi surfaces used here are ones pi promises extensions:
  *
- * Falls back silently to built-in models if the API call fails or no auth is available.
+ *  - `@earendil-works/pi-ai/providers/all` is on pi's extension alias list, so
+ *    `getBuiltinModels` is always the running pi's catalog. Locating pi-ai by
+ *    path instead — `import.meta.resolve("@earendil-works/pi-ai")` — is what the
+ *    previous version did, and it does not survive pi's bundled builds, where
+ *    pi-ai exists only as an in-bundle virtual module and the specifier resolves
+ *    either to nothing or to whatever stale copy happens to sit in node_modules.
+ *
+ *  - `refreshModels` receives a credential pi has already refreshed, so nothing
+ *    here reads, locks or writes auth.json, and no OAuth internals are needed.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-// @ts-ignore — no type declarations for this internal submodule
-import * as copilotOAuthPublicApi from "@earendil-works/pi-ai/oauth";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { createCopilotModelRefresh } from "./refresh.ts";
 
-interface RefreshedCopilotCredentials {
-  access: string;
-  refresh: string;
-  expires?: number;
-  enterpriseUrl?: string;
-}
+const PROVIDER = "github-copilot";
 
-interface CopilotOAuthAdapter {
-  getBaseUrl(token: string, enterpriseDomain?: string): string | Promise<string>;
-  refreshToken(refreshToken: string, enterpriseDomain?: string): Promise<RefreshedCopilotCredentials>;
-}
-
-/**
- * Resolve helpers for computing the Copilot API base URL and refreshing OAuth
- * tokens. pi-ai has re-shuffled this internal module across releases:
- *  - historically: named exports `getGitHubCopilotBaseUrl`/`refreshGitHubCopilotToken`
- *    re-exported from the public `@earendil-works/pi-ai/oauth` subpath.
- *  - as of pi-ai 0.80.10 (pi 0.80.8+): those helpers moved to the private
- *    `dist/auth/oauth/github-copilot.js` module and are only exposed as an
- *    `OAuthAuth`-shaped `githubCopilotOAuth` object (`.toAuth()`/`.refresh()`),
- *    which isn't part of the package's public `exports` map.
- *
- * Prefer the stable public API when available and fall back to a deep import
- * of the private module (which Node allows when using an already-resolved
- * absolute file path rather than a bare specifier).
- */
-async function loadCopilotOAuthAdapter(): Promise<CopilotOAuthAdapter | undefined> {
-  const publicApi = copilotOAuthPublicApi as {
-    getGitHubCopilotBaseUrl?: (token: string, enterpriseDomain?: string) => string;
-    refreshGitHubCopilotToken?: (refreshToken: string, enterpriseDomain?: string) => Promise<RefreshedCopilotCredentials>;
-  };
-
-  if (
-    typeof publicApi.getGitHubCopilotBaseUrl === "function" &&
-    typeof publicApi.refreshGitHubCopilotToken === "function"
-  ) {
-    const { getGitHubCopilotBaseUrl, refreshGitHubCopilotToken } = publicApi;
-    return {
-      getBaseUrl: (token, enterpriseDomain) => getGitHubCopilotBaseUrl(token, enterpriseDomain),
-      refreshToken: (refreshToken, enterpriseDomain) => refreshGitHubCopilotToken(refreshToken, enterpriseDomain),
-    };
-  }
-
-  let distDir: string;
-  try {
-    const piAiMain = fileURLToPath(import.meta.resolve("@earendil-works/pi-ai"));
-    distDir = dirname(piAiMain);
-  } catch {
-    return undefined;
-  }
-
-  const candidatePaths = [join(distDir, "auth", "oauth", "github-copilot.js")];
-
-  for (const candidatePath of candidatePaths) {
-    if (!existsSync(candidatePath)) continue;
-    try {
-      const mod = await import(pathToFileURL(candidatePath).href);
-      const oauth = mod.githubCopilotOAuth;
-      if (!oauth || typeof oauth.toAuth !== "function" || typeof oauth.refresh !== "function") continue;
-
-      return {
-        getBaseUrl: async (token, enterpriseDomain) => {
-          const auth = await oauth.toAuth({ access: token, enterpriseUrl: enterpriseDomain });
-          return auth.baseUrl;
-        },
-        refreshToken: async (refreshToken, enterpriseDomain) => {
-          const refreshed = await oauth.refresh({ refresh: refreshToken, enterpriseUrl: enterpriseDomain });
-          return refreshed;
-        },
-      };
-    } catch {
-      // Try next candidate
-    }
-  }
-
-  return undefined;
-}
-
-const COPILOT_HEADERS: Record<string, string> = {
-  "User-Agent": "GitHubCopilotChat/0.35.0",
-  "Editor-Version": "vscode/1.107.0",
-  "Editor-Plugin-Version": "copilot-chat/0.35.0",
-  "Copilot-Integration-Id": "vscode-chat",
-};
-
-interface CopilotModel {
-  id: string;
-  name: string;
-  model_picker_enabled?: boolean;
-  policy?: { state: string };
-  capabilities?: {
-    limits?: {
-      max_context_window_tokens?: number;
-      max_output_tokens?: number;
-    };
-    supports?: { vision?: boolean };
-  };
-}
-
-interface AuthEntry {
-  type: string;
-  refresh: string;
-  access: string;
-  expires?: number;
-  enterpriseUrl?: string;
-}
-
-/**
- * Return a valid access token, refreshing via the refresh token if the stored
- * one has expired. Writes the new credentials back to auth.json so pi picks
- * them up on the next startup (same behaviour as AuthStorage).
- */
-async function getAccessToken(
-  authPath: string,
-  entry: AuthEntry,
-  adapter: CopilotOAuthAdapter,
-): Promise<string> {
-  if (!entry.expires || Date.now() < entry.expires) {
-    return entry.access;
-  }
-  // Token expired — refresh it
-  const refreshed = await adapter.refreshToken(entry.refresh, entry.enterpriseUrl);
-  // Write back so pi's AuthStorage sees the fresh token
-  const auth = JSON.parse(readFileSync(authPath, "utf-8"));
-  auth["github-copilot"] = { ...auth["github-copilot"], ...refreshed };
-  writeFileSync(authPath, JSON.stringify(auth, null, 2));
-  return refreshed.access;
-}
-
-async function fetchCopilotModels(token: string, baseUrl: string): Promise<CopilotModel[]> {
-  const response = await fetch(`${baseUrl}/models`, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2025-05-01",
-      ...COPILOT_HEADERS,
-    },
+export default function copilotModelLimits(pi: ExtensionAPI) {
+  const refreshModels = createCopilotModelRefresh({
+    builtInModels: () => getBuiltinModels(PROVIDER) as unknown as ProviderModelConfig[],
   });
 
-  if (!response.ok) {
-    throw new Error(`Copilot /models API returned ${response.status}`);
-  }
-
-  const data = (await response.json()) as { data?: CopilotModel[] };
-  return data.data ?? [];
-}
-
-/**
- * Resolve the path to pi-ai's models.generated.js by deriving it from the
- * pi-ai package entry point that jiti aliases for extensions.
- */
-async function loadBuiltInCopilotModels(): Promise<Record<string, any> | undefined> {
-  const piAiMain = fileURLToPath(import.meta.resolve("@earendil-works/pi-ai"));
-  const modelsPath = join(dirname(piAiMain), "models.generated.js");
-  const mod = await import(modelsPath);
-  return mod.MODELS?.["github-copilot"];
-}
-
-export default async function copilotModelLimits(pi: ExtensionAPI) {
-  // process.env.HOME may be undefined in pi's execution context
-  const home = process.env.HOME || homedir();
-  const authPath = join(home, ".pi", "agent", "auth.json");
-  if (!existsSync(authPath)) return;
-
-  let auth: Record<string, AuthEntry>;
-  try {
-    auth = JSON.parse(readFileSync(authPath, "utf-8"));
-  } catch {
-    return;
-  }
-
-  const copilotAuth = auth["github-copilot"];
-  if (!copilotAuth?.access || !copilotAuth?.refresh) return;
-
-  const adapter = await loadCopilotOAuthAdapter();
-  if (!adapter) return; // Unable to resolve OAuth helpers — fall back silently
-
-  let accessToken: string;
-  try {
-    accessToken = await getAccessToken(authPath, copilotAuth, adapter);
-  } catch {
-    return; // Refresh failed — fall back silently
-  }
-
-  const baseUrl = await adapter.getBaseUrl(accessToken, copilotAuth.enterpriseUrl);
-
-  let apiModels: CopilotModel[];
-  try {
-    apiModels = await fetchCopilotModels(accessToken, baseUrl);
-  } catch {
-    return; // Fail silently — built-in models remain
-  }
-
-  if (apiModels.length === 0) return;
-
-  // Build lookup of API limits and a set of picker-enabled model IDs.
-  // Only picker-enabled models are user-facing; the rest (internal/legacy/disabled)
-  // should be excluded from the final list entirely.
-  const pickerEnabledIds = new Set<string>();
-  const limitsById = new Map<string, { contextWindow: number; maxTokens: number }>();
-
-  for (const m of apiModels) {
-    if (!m.model_picker_enabled) continue;
-
-    pickerEnabledIds.add(m.id);
-    // Also index by base name (strip date suffix like -2025-04-14)
-    const base = m.id.replace(/-\d{4}-\d{2}-\d{2}$/, "");
-    if (base !== m.id) pickerEnabledIds.add(base);
-
-    const ctx = m.capabilities?.limits?.max_context_window_tokens;
-    const out = m.capabilities?.limits?.max_output_tokens;
-
-    if (ctx != null && out != null) {
-      const entry = { contextWindow: ctx, maxTokens: out };
-      limitsById.set(m.id, entry);
-      if (base !== m.id && !limitsById.has(base)) {
-        limitsById.set(base, entry);
-      }
-    }
-  }
-
-  // Load built-in model definitions to preserve api, compat, thinkingLevelMap, etc.
-  let builtInModels: Record<string, any>;
-  try {
-    builtInModels = (await loadBuiltInCopilotModels()) ?? {};
-  } catch {
-    return;
-  }
-
-  if (Object.keys(builtInModels).length === 0) return;
-
-  // Build patched model list
-  const patchedModels = [];
-
-  for (const [modelId, model] of Object.entries(builtInModels) as [string, any][]) {
-    const apiLimits = limitsById.get(modelId);
-
-    // Drop built-in models not present in the API's picker-enabled set —
-    // they are unavailable for this subscription or have been disabled.
-    if (!pickerEnabledIds.has(modelId)) continue;
-
-    const patchedContextWindow = apiLimits?.contextWindow ?? model.contextWindow;
-    const patchedMaxTokens = apiLimits?.maxTokens ?? model.maxTokens;
-
-    patchedModels.push({
-      id: model.id,
-      name: model.name,
-      api: model.api,
-      baseUrl,
-      reasoning: model.reasoning,
-      ...(model.thinkingLevelMap && { thinkingLevelMap: model.thinkingLevelMap }),
-      input: model.input,
-      cost: model.cost,
-      contextWindow: patchedContextWindow,
-      maxTokens: patchedMaxTokens,
-      headers: COPILOT_HEADERS,
-      ...(model.compat && { compat: model.compat }),
-    });
-  }
-
-  if (patchedModels.length === 0) return;
-
-  // registerProvider() validation requires baseUrl and apiKey/oauth at the
-  // provider config level, even when overriding a built-in provider. The baseUrl
-  // is already computed. The apiKey is a placeholder — OAuth credentials are used
-  // at runtime and take precedence over this fallback in getApiKeyAndHeaders().
-  pi.registerProvider("github-copilot", {
-    baseUrl,
-    apiKey: "$__COPILOT_OAUTH__",
-    models: patchedModels,
-  });
+  // No baseUrl and no apiKey: overriding a built-in provider inherits both its
+  // auth methods, and the placeholder key the previous version passed now
+  // composes into a real api-key method that fails to resolve.
+  pi.registerProvider(PROVIDER, { refreshModels });
 }
