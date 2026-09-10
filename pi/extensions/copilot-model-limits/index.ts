@@ -25,7 +25,8 @@
  * Nothing is cached. The limits are read from Copilot when they are needed and
  * are never written down, so there is no stored copy to go stale or to reconcile
  * against the account. What that costs is one request per session start; see
- * `refreshOnSessionStart` for why it has to be asked for at all.
+ * `refreshOnSessionStart` for why it has to be asked for at all, and why nobody
+ * waits for it.
  */
 
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
@@ -79,6 +80,9 @@ function createFailureReporter() {
  * itself through the reporter, which catches the passes pi fires as well as this
  * one; and an aborted refresh is routine, because pi supersedes the previous pass
  * for a provider whenever a new one starts.
+ *
+ * Started, never awaited — see the `session_start` handler. The limits land in
+ * pi's catalog whenever Copilot answers, and nothing here needs them sooner.
  */
 async function refreshOnSessionStart(ctx: ExtensionContext): Promise<void> {
   // pi reads PI_OFFLINE as "no model network at all". Asking anyway would be
@@ -114,13 +118,19 @@ export default function copilotModelLimits(pi: ExtensionAPI) {
     refreshModels: createCopilotModelRefresh({ builtInModels, onFailure: failures.report }),
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     failures.bindTo((reason) =>
       ctx.ui.notify(
         `copilot-model-limits: ${reason}. pi's own catalog values are showing and may not match your Copilot account.`,
         "error",
       ),
     );
-    await refreshOnSessionStart(ctx);
+    // Asked for, not waited on. pi hands `session_start` to one extension at a
+    // time and awaits each handler, and it does so after the TUI is already on
+    // screen — so a handler that blocks on a Copilot round trip holds up every
+    // handler behind it, including the ones that dress the editor. Awaiting
+    // here is what made pi paint its default prompt box and only then swap in
+    // the custom one, half a second later, in full view.
+    void refreshOnSessionStart(ctx);
   });
 }

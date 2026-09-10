@@ -71,6 +71,50 @@ test("every session start reads the limits again, over the network", async () =>
   }
 });
 
+// pi awaits one extension's session_start handler before it calls the next, and
+// it emits the event after the TUI is mounted. A handler that waits for Copilot
+// therefore keeps every handler behind it waiting too — including the one that
+// replaces pi's prompt box — which shows up as the default editor being painted
+// and then visibly swapped. The request is made here; the answer is not waited
+// for.
+test("a session start is not held up while Copilot answers", async () => {
+  const { handlers } = load();
+  const refreshes: Array<Record<string, unknown>> = [];
+  let answer: (() => void) | undefined;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  const ctx = {
+    modelRegistry: {
+      refresh: async (options: Record<string, unknown>) => {
+        refreshes.push(options);
+        await answered;
+        return { aborted: false, errors: new Map() };
+      },
+    },
+    ui: { notify: () => {} },
+  };
+
+  const handled = Promise.resolve(handlers.get("session_start")?.(sessionStart("startup"), ctx)).then(
+    () => "returned" as const,
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const held = new Promise<"held">((resolve) => {
+    timer = setTimeout(() => resolve("held"), 50);
+  });
+
+  try {
+    assert.equal(await Promise.race([handled, held]), "returned");
+  } finally {
+    clearTimeout(timer);
+    answer?.();
+  }
+
+  // Asked for all the same: the limits still get read, just not in the way.
+  assert.equal(refreshes.length, 1);
+  await handled;
+});
+
 test("the refresh is asked for on its own, so no other provider is disturbed", async () => {
   const { handlers } = load();
   const { ctx, refreshes } = extensionContext();
