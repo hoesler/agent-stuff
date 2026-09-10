@@ -7,6 +7,7 @@
  */
 
 export interface ModelLimits {
+  /** From `max_prompt_tokens`; see `parseCopilotLimits` for why, not the total. */
   contextWindow: number;
   maxTokens: number;
 }
@@ -64,6 +65,19 @@ function tokenCount(value: unknown): number | undefined {
  * still answers for the undated id pi ships. A model that reports only one of
  * the two limits is skipped entirely: pi's pair is at least self-consistent,
  * and half an override is worse than none.
+ *
+ * `contextWindow` comes from `max_prompt_tokens`, not from the
+ * `max_context_window_tokens` that reads like the obvious match. pi spends
+ * `contextWindow` as an input budget and nothing else — it measures the
+ * conversation against it (`tokens / contextWindow`) and compacts once past
+ * `contextWindow - reserveTokens` — while Copilot reports the total it will
+ * accept across prompt and output and enforces `max_prompt_tokens` on the
+ * prompt alone. Handing pi the total buys a band where pi believes the request
+ * fits and Copilot refuses it, with no compaction on the way: on gpt-5.6-sol
+ * that is 922000 enforced against 1050000 assumed.
+ *
+ * The total is usually the sum of the two parts, but not always — gpt-5-mini
+ * reports 264000 against 128000 + 64000 — so neither is derived from the other.
  */
 export function parseCopilotLimits(payload: unknown): Map<string, ModelLimits> {
   const limits = new Map<string, ModelLimits>();
@@ -77,7 +91,7 @@ export function parseCopilotLimits(payload: unknown): Map<string, ModelLimits> {
     if (typeof id !== "string" || !id) continue;
 
     const reported = asRecord(asRecord(model.capabilities)?.limits);
-    const contextWindow = tokenCount(reported?.max_context_window_tokens);
+    const contextWindow = tokenCount(reported?.max_prompt_tokens);
     const maxTokens = tokenCount(reported?.max_output_tokens);
     if (contextWindow === undefined || maxTokens === undefined) continue;
 

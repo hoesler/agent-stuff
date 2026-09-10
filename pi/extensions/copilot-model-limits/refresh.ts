@@ -39,6 +39,17 @@ export interface CopilotRefreshDeps {
   builtInModels: () => ProviderModelConfig[];
   /** Defaults to the ambient fetch, looked up per call so a later swap is honoured. */
   fetchModels?: typeof globalThis.fetch;
+  /**
+   * Told why the limits could not be read, just before the throw.
+   *
+   * Throwing is not enough on its own. pi surfaces a refresh error in the model
+   * picker, but the pass that actually reads the limits is the one interactive
+   * mode fires after startup, and that one ends in `.catch(() => {})` without
+   * ever reading `result.errors`. A Copilot account that could not be read
+   * would otherwise sit there showing pi's catalog values as if they were its
+   * own.
+   */
+  onFailure?: (reason: string) => void;
 }
 
 /** What the Copilot API expects to hear from an editor. */
@@ -51,8 +62,24 @@ const COPILOT_HEADERS: Record<string, string> = {
 
 const COPILOT_API_VERSION = "2026-06-01";
 
-export function createCopilotModelRefresh({ builtInModels, fetchModels }: CopilotRefreshDeps) {
+export function createCopilotModelRefresh({ builtInModels, fetchModels, onFailure }: CopilotRefreshDeps) {
   const request: typeof globalThis.fetch = (...args) => (fetchModels ?? globalThis.fetch)(...args);
+
+  // pi's own network pass and the pass the extension asks for on session start
+  // can both trip over the same trouble, so the reason is only worth saying
+  // once. A good read clears it, and trouble that comes back is said again.
+  let lastAnnounced: string | undefined;
+
+  const announce = (reason: string) => {
+    if (reason !== lastAnnounced) onFailure?.(reason);
+    lastAnnounced = reason;
+  };
+
+  /** Say it, then throw it, so neither pi nor the user is left guessing. */
+  const fail = (reason: string): never => {
+    announce(reason);
+    throw new Error(reason);
+  };
 
   return async function refreshModels(context: RefreshContext): Promise<ProviderModelConfig[]> {
     const models = builtInModels();
@@ -64,28 +91,38 @@ export function createCopilotModelRefresh({ builtInModels, fetchModels }: Copilo
     if (!credential) return models;
 
     const baseUrl = copilotApiBaseUrl(credential.access, enterpriseDomain(credential.enterpriseUrl));
-    const response = await request(`${baseUrl}/models`, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${credential.access}`,
-        "X-GitHub-Api-Version": COPILOT_API_VERSION,
-        ...COPILOT_HEADERS,
-      },
-      signal: context.signal,
-    });
 
-    // From here on a failure is reported rather than absorbed. pi shows it as
-    // "Could not refresh github-copilot; showing cached models.", which is the
-    // point of the extension: limits it could not read should not look read.
+    // From here on a failure is reported rather than absorbed. Limits it could
+    // not read should not look read.
+    let response: Awaited<ReturnType<typeof request>>;
+    try {
+      response = await request(`${baseUrl}/models`, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${credential.access}`,
+          "X-GitHub-Api-Version": COPILOT_API_VERSION,
+          ...COPILOT_HEADERS,
+        },
+        signal: context.signal,
+      });
+    } catch (cause) {
+      // pi aborts the previous pass for a provider whenever a new one starts,
+      // so a cancelled request is routine and stays quiet. It is pi's to report.
+      if (context.signal?.aborted) throw cause;
+      announce(`Copilot /models could not be reached: ${cause instanceof Error ? cause.message : String(cause)}`);
+      throw cause;
+    }
+
     if (!response.ok) {
-      throw new Error(`Copilot /models answered ${response.status} ${response.statusText}`);
+      fail(`Copilot /models answered ${response.status} ${response.statusText}`);
     }
 
     const limits = parseCopilotLimits(await response.json());
     if (limits.size === 0) {
-      throw new Error("Copilot /models reported no usable token limits");
+      fail("Copilot /models reported no usable token limits");
     }
 
+    lastAnnounced = undefined;
     return applyCopilotLimits(models, limits);
   };
 }

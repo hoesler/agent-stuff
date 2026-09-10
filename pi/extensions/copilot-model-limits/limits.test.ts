@@ -40,9 +40,15 @@ test("an absent or unreadable enterprise is simply not one", () => {
 });
 
 const catalog = (...models: unknown[]) => ({ data: models });
-const model = (id: string, contextWindow: number, maxOutput: number) => ({
+const model = (id: string, maxPrompt: number, maxOutput: number) => ({
   id,
-  capabilities: { limits: { max_context_window_tokens: contextWindow, max_output_tokens: maxOutput } },
+  capabilities: {
+    limits: {
+      max_prompt_tokens: maxPrompt,
+      max_output_tokens: maxOutput,
+      max_context_window_tokens: maxPrompt + maxOutput,
+    },
+  },
 });
 
 test("a model's reported limits are read from its capabilities", () => {
@@ -64,12 +70,46 @@ test("an exact id is never overwritten by another model's base name", () => {
 test("a model that reports only one of the two limits is left to pi's own value", () => {
   const limits = parseCopilotLimits(
     catalog(
-      { id: "half", capabilities: { limits: { max_context_window_tokens: 200_000 } } },
+      { id: "prompt-only", capabilities: { limits: { max_prompt_tokens: 200_000 } } },
+      { id: "output-only", capabilities: { limits: { max_output_tokens: 64_000 } } },
       { id: "none", capabilities: {} },
       { id: "bare" },
     ),
   );
   assert.equal(limits.size, 0);
+});
+
+// pi spends contextWindow as an input budget: it measures the conversation
+// against it and compacts at contextWindow - reserveTokens. Copilot enforces
+// max_prompt_tokens on input and reports max_context_window_tokens as the
+// prompt-plus-output total, so the total is the wrong one to hand pi. On
+// gpt-5.6-sol that is 922000 against 1050000 — a request that pi thinks fits
+// and Copilot refuses.
+test("the prompt ceiling is what pi is given, not the prompt-plus-output total", () => {
+  const limits = parseCopilotLimits(
+    catalog({
+      id: "gpt-5.6-sol",
+      capabilities: {
+        limits: { max_context_window_tokens: 1_050_000, max_prompt_tokens: 922_000, max_output_tokens: 128_000 },
+      },
+    }),
+  );
+  assert.deepEqual(limits.get("gpt-5.6-sol"), { contextWindow: 922_000, maxTokens: 128_000 });
+});
+
+// The total is usually the sum of the two, but not always: gpt-5-mini reports
+// 264000 against 128000 + 64000. Deriving one from the other would invent a
+// number, so only what the endpoint says is used.
+test("a total that is not the sum of the parts changes nothing", () => {
+  const limits = parseCopilotLimits(
+    catalog({
+      id: "gpt-5-mini",
+      capabilities: {
+        limits: { max_context_window_tokens: 264_000, max_prompt_tokens: 128_000, max_output_tokens: 64_000 },
+      },
+    }),
+  );
+  assert.deepEqual(limits.get("gpt-5-mini"), { contextWindow: 128_000, maxTokens: 64_000 });
 });
 
 test("limits that are not positive whole numbers are not believed", () => {

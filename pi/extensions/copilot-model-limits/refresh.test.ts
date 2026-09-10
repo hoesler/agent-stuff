@@ -35,7 +35,7 @@ const answering = (body: unknown, init: { ok?: boolean; status?: number; statusT
 };
 
 const catalogue = {
-  data: [{ id: "gpt-5.4", capabilities: { limits: { max_context_window_tokens: 1_000_000, max_output_tokens: 128_000 } } }],
+  data: [{ id: "gpt-5.4", capabilities: { limits: { max_prompt_tokens: 1_000_000, max_output_tokens: 128_000, max_context_window_tokens: 1_128_000 } } }],
 };
 
 test("the reported limits replace pi's own", async () => {
@@ -103,4 +103,86 @@ test("an enterprise credential without a proxy-ep is asked at its own host", asy
     context({ credential: credential({ access: "opaque", enterpriseUrl: "https://ghe.example.com" }) }),
   );
   assert.equal(calls[0]?.url, "https://copilot-api.ghe.example.com/models");
+});
+
+// pi's startup refresh ends in `.catch(() => {})` and never reads
+// result.errors, so throwing alone is invisible exactly where the limits are
+// first read. The extension has to say so itself.
+test("a refused request is announced as well as thrown", async () => {
+  const said: string[] = [];
+  const { fetchModels } = answering({}, { ok: false, status: 401, statusText: "Unauthorized" });
+  const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels, onFailure: (reason) => said.push(reason) });
+  await assert.rejects(refresh(context()), /401 Unauthorized/);
+  assert.equal(said.length, 1);
+  assert.match(said[0] ?? "", /401 Unauthorized/);
+});
+
+test("a catalog with no readable limits is announced as well as thrown", async () => {
+  const said: string[] = [];
+  const { fetchModels } = answering({ data: [{ id: "gpt-5.4" }] });
+  const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels, onFailure: (reason) => said.push(reason) });
+  await assert.rejects(refresh(context()), /no usable token limits/);
+  assert.match(said[0] ?? "", /no usable token limits/);
+});
+
+test("an endpoint that cannot be reached is announced, not only thrown", async () => {
+  const said: string[] = [];
+  const fetchModels = (async () => {
+    throw new Error("getaddrinfo ENOTFOUND api.individual.githubcopilot.com");
+  }) as unknown as typeof globalThis.fetch;
+  const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels, onFailure: (reason) => said.push(reason) });
+  await assert.rejects(refresh(context()), /ENOTFOUND/);
+  assert.match(said[0] ?? "", /could not be reached/);
+});
+
+// A superseded refresh is routine: pi aborts the previous pass for a provider
+// whenever a new one starts. Announcing that would cry wolf on every reload.
+test("a cancelled request is pi's own business and says nothing", async () => {
+  const said: string[] = [];
+  const controller = new AbortController();
+  const fetchModels = (async () => {
+    controller.abort();
+    throw new Error("This operation was aborted");
+  }) as unknown as typeof globalThis.fetch;
+  const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels, onFailure: (reason) => said.push(reason) });
+  await assert.rejects(refresh(context({ signal: controller.signal })));
+  assert.deepEqual(said, []);
+});
+
+test("the passes that are expected to stay quiet announce nothing", async () => {
+  const said: string[] = [];
+  const { fetchModels } = answering(catalogue);
+  const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels, onFailure: (reason) => said.push(reason) });
+  await refresh(context({ allowNetwork: false }));
+  await refresh(context({ credential: undefined }));
+  await refresh(context());
+  assert.deepEqual(said, []);
+});
+
+// pi's own network pass and the one the extension asks for on session start can
+// both fail on the same trouble. Saying it twice per session start is noise.
+test("the same trouble is announced once, and again only after it cleared", async () => {
+  const said: string[] = [];
+  let ok = false;
+  const fetchModels = (async () => ({
+    ok,
+    status: ok ? 200 : 401,
+    statusText: ok ? "OK" : "Unauthorized",
+    json: async () => catalogue,
+  })) as unknown as typeof globalThis.fetch;
+  const refresh = createCopilotModelRefresh({
+    builtInModels: () => MODELS,
+    fetchModels,
+    onFailure: (reason) => said.push(reason),
+  });
+
+  await assert.rejects(refresh(context()));
+  await assert.rejects(refresh(context()));
+  assert.equal(said.length, 1, "a repeat of the same reason stays quiet");
+
+  ok = true;
+  await refresh(context());
+  ok = false;
+  await assert.rejects(refresh(context()));
+  assert.equal(said.length, 2, "trouble that comes back after a good read is announced again");
 });
