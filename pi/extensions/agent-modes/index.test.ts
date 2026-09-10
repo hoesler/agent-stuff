@@ -359,8 +359,8 @@ test("before_agent_start appends the mode catalog when exposeCatalogInSystemProm
   try {
     const result = await h.events.get("before_agent_start")!({ prompt: "hi", systemPrompt: "base prompt" }, h.context) as unknown as { systemPrompt: string };
     assert.match(result.systemPrompt, /^base prompt\n\n## Available agent modes/);
-    assert.match(result.systemPrompt, /`low` → `test\/low:low`/);
-    assert.match(result.systemPrompt, /`high` → `test\/high:high` — Careful/);
+    assert.match(result.systemPrompt, /- `test\/low:low` \(mode: low\)/);
+    assert.match(result.systemPrompt, /- `test\/high:high` \(mode: high\) — Careful/);
   } finally { h.restore(); }
 });
 

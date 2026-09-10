@@ -112,13 +112,32 @@ Each mode is rendered as a ready-to-use `provider/model:thinkingLevel` string pl
 ```text
 ## Available agent modes (agent-modes extension)
 
-When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass one of these exact strings — including the `:level` suffix — to pin both the model and its thinking level for that task:
+When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass the backticked value that *starts* one of the lines below, verbatim and including any `:level` suffix. A mode's name is shown for orientation only — it is not a value this parameter accepts.
 
-- `low` → `zai/glm-5.2:low` — Fast, low-cost mode for small, well-defined tasks
-- `medium` → `openai/gpt-5.6-sol:medium` — Balanced intelligence, speed, and cost
-- `high` → `openai/gpt-5.6-sol:high` — Deep reasoning for hard tasks
-- `ultra` → `openai/gpt-5.6-sol:max` — Maximum effort for hard, open-ended tasks
+- `zai/glm-5.2:low` (mode: low) — Fast, low-cost mode for small, well-defined tasks
+- `openai/gpt-5.6-sol:medium` (mode: medium) — Balanced intelligence, speed, and cost
+- `openai/gpt-5.6-sol:high` (mode: high) — Deep reasoning for hard tasks
+- `openai/gpt-5.6-sol:max` (mode: ultra) — Maximum effort for hard, open-ended tasks
 ```
+
+### Why the mode name is not the leading value
+
+A **mode id is not a route key**, and passing one as `model` does not work: the
+key universe is `defaultRoutes` plus `modes[].routes`, so a mode id resolves to
+nothing and the bare word reaches the child. Where the id happens to name a
+thinking level — `low`, `medium`, `high` — `subagent` refuses the dispatch
+outright.
+
+That mistake is easy to make from a badly shaped menu, so the block is shaped to
+prevent it. Both of its lists are read under one rule — *the backticked token
+that starts a line is the string to pass* — and the routes list below makes that
+rule literally true. A mode line leading with a backticked id would break the
+rule in the one place where the id is the wrong value, so the id sits after the
+model string and unbackticked: still there to reason about, no longer dressed as
+something to pass.
+
+If you want a name that stays stable while the target behind it moves, that is
+what a route is. Add the key to `defaultRoutes` and pass it deliberately.
 
 This pairs well with skills that instruct an agent to pick a model tier per
 subagent task (e.g. superpowers' subagent-driven-development skill's "cheap /

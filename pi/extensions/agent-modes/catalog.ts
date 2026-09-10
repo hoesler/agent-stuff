@@ -4,7 +4,7 @@ import type { ModeConfig, ModeDefinition } from "./types.ts";
 const INTRO = [
   "## Available agent modes (agent-modes extension)",
   "",
-  "When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass one of these exact strings — including the `:level` suffix — to pin both the model and its thinking level for that task:",
+  "When dispatching subagents (e.g. via the `subagent` tool's `model` parameter), pass the backticked value that *starts* one of the lines below, verbatim and including any `:level` suffix. A mode's name is shown for orientation only — it is not a value this parameter accepts.",
   "",
 ];
 
@@ -13,9 +13,21 @@ function modelString(mode: ModeDefinition): string {
   return mode.thinkingLevel === "off" ? base : `${base}:${mode.thinkingLevel}`;
 }
 
+/**
+ * Model string first and backticked, mode name second and bare.
+ *
+ * Both lists in this block are read under one rule — the backticked token that
+ * starts a line is the string to pass — and the routes list below makes that
+ * rule literally true. A mode line that led with a backticked id would break it
+ * in the one place where the id is the wrong value: mode ids are not route keys
+ * and resolve to nothing, so the child is spawned on a bare word (or, for an id
+ * that happens to name a thinking level, the dispatch is refused outright).
+ * Leaving the id unbackticked costs the reader nothing and removes the only
+ * token here that looks passable and is not.
+ */
 function formatModeLine(mode: ModeDefinition): string {
   const suffix = mode.description ? ` — ${mode.description}` : "";
-  return `- \`${mode.id}\` → \`${modelString(mode)}\`${suffix}`;
+  return `- \`${modelString(mode)}\` (mode: ${mode.id})${suffix}`;
 }
 
 const ROUTES_INTRO = [

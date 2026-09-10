@@ -108,6 +108,8 @@ Resolving late is the point. A key like `oracle` can mean a different model in e
 
 With no publisher installed, or with a key nothing resolves, the bare value is passed to the child unchanged and the child errors on an unknown model — exactly the behavior before routes existed. The one exception is below.
 
+A **mode id is not a route key**. `agent-modes` publishes only what its `defaultRoutes` and `modes[].routes` tables name; the ids you cycle with `/mode` are not in that set and resolve to nothing. The two are deliberately separate — a route is mode-*relative* and carries a suppression rule that makes no sense for a mode's own absolute target — so accepting ids here would mean exempting them from the rule that defines what a route is. To dispatch to a mode's model, pass that mode's `provider/model:thinkingLevel` string, which the catalog block gives you ready to use; to have a name that outlives the target behind it, define an actual route key.
+
 ### Thinking levels are not models
 
 A caller reading `model` as "how hard should this think" writes the thinking level on its own — `model: "medium"`. That value can never be a model: a reference is `provider/model` with the level as an optional `:thinkingLevel` suffix. Left to pass through, it would buy a child process before pi rejected it.

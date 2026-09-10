@@ -12,11 +12,32 @@ const base: ModeConfig = {
   ],
 };
 
-test("formats each mode as id, provider/model:thinkingLevel, and description in array order", () => {
+test("leads each mode line with the model string, naming the mode only as orientation", () => {
   const catalog = formatModeCatalog(base);
   const lines = catalog.split("\n");
-  assert.equal(lines.at(-2), "- `low` → `zai/glm-5.2:low` — Fast, low-cost mode for small, well-defined tasks");
-  assert.equal(lines.at(-1), "- `medium` → `openai/gpt-5.6-sol:medium` — Balanced intelligence, speed, and cost");
+  assert.equal(lines.at(-2), "- `zai/glm-5.2:low` (mode: low) — Fast, low-cost mode for small, well-defined tasks");
+  assert.equal(lines.at(-1), "- `openai/gpt-5.6-sol:medium` (mode: medium) — Balanced intelligence, speed, and cost");
+});
+
+/**
+ * The confusion this guards against: an agent reads the routes list, correctly
+ * generalises "the backticked token starting a line is what I pass", and
+ * applies it to the modes list. That rule only stays true if a mode id never
+ * holds that position — and, so the signal is unambiguous, is never backticked
+ * anywhere in the block.
+ */
+test("a mode id is never presented as a passable value", () => {
+  const catalog = formatModeCatalog(base, [{ key: "oracle", model: "anthropic/claude-fable-5:high" }]);
+  for (const id of ["low", "medium"]) {
+    assert.doesNotMatch(catalog, new RegExp("^- `" + id + "`", "m"), `mode "${id}" leads a line`);
+    assert.doesNotMatch(catalog, new RegExp("`" + id + "`"), `mode "${id}" appears backticked`);
+  }
+  // The one list where a leading backticked key *is* the value to pass.
+  assert.match(catalog, /^- `oracle`/m);
+});
+
+test("the intro rules mode names out as values in so many words", () => {
+  assert.match(formatModeCatalog(base), /not a value this parameter accepts/);
 });
 
 test("includes guidance naming the subagent tool's model parameter", () => {
@@ -39,7 +60,7 @@ test("omits the trailing dash-description segment when a mode has no description
     modes: [{ id: "bare", provider: "test", model: "m", thinkingLevel: "medium", label: "Bare" }],
   });
   const line = catalog.split("\n").at(-1)!;
-  assert.equal(line, "- `bare` → `test/m:medium`");
+  assert.equal(line, "- `test/m:medium` (mode: bare)");
   assert.doesNotMatch(line, /—\s*$/);
 });
 
