@@ -29,6 +29,7 @@ import { resolveModelReference } from "./routes.ts";
 import {
 	type AgentRunResult,
 	describeRunFailure,
+	displayedFailureReason,
 	emptyUsage,
 	getFinalOutput,
 	isFailedRun,
@@ -658,6 +659,8 @@ export function createSubagentTool(
 
 			const mdTheme = getMarkdownTheme();
 
+			const failureText = displayedFailureReason;
+
 			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
 				const toShow = limit ? items.slice(-limit) : items;
 				const skipped = limit && items.length > limit ? items.length - limit : 0;
@@ -680,14 +683,19 @@ export function createSubagentTool(
 				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getFinalOutput(r.messages);
+				// The same reason the calling agent is handed, so the two surfaces
+				// cannot disagree about why a run failed. A pre-dispatch failure has
+				// no `errorMessage` and no messages, and reading only the former
+				// rendered it as "(no output)" while the model got the explanation.
+				const failureReason = failureText(r);
 
 				if (expanded) {
 					const container = new Container();
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage)
-						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+					if (failureReason)
+						container.addChild(new Text(theme.fg("error", `Error: ${failureReason}`), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
@@ -721,7 +729,7 @@ export function createSubagentTool(
 
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
+				if (failureReason) text += `\n${theme.fg("error", `Error: ${failureReason}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
 					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
@@ -776,6 +784,8 @@ export function createSubagentTool(
 							),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+						const stepFailure = failureText(r);
+						if (stepFailure) container.addChild(new Text(theme.fg("error", `Error: ${stepFailure}`), 0, 0));
 
 						// Show tool calls
 						for (const item of displayItems) {
@@ -817,8 +827,10 @@ export function createSubagentTool(
 				for (const r of details.results) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const stepFailure = failureText(r);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
-					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
+					if (stepFailure) text += `\n${theme.fg("error", `Error: ${stepFailure}`)}`;
+					else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				}
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
@@ -861,6 +873,8 @@ export function createSubagentTool(
 							new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+						const taskFailure = failureText(r);
+						if (taskFailure) container.addChild(new Text(theme.fg("error", `Error: ${taskFailure}`), 0, 0));
 
 						// Show tool calls
 						for (const item of displayItems) {
@@ -903,8 +917,10 @@ export function createSubagentTool(
 								? theme.fg("success", "✓")
 								: theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const taskFailure = failureText(r);
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
-					if (displayItems.length === 0)
+					if (taskFailure) text += `\n${theme.fg("error", `Error: ${taskFailure}`)}`;
+					else if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				}

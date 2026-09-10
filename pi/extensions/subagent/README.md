@@ -31,6 +31,27 @@ A run killed from outside — by `timeoutSeconds`, or by the user aborting the t
 
 Every timer and listener is scoped to one child process and released when it exits, so a chain that reuses a single abort signal across steps does not accumulate a listener per completed step.
 
+### How a failure is reported
+
+A failed run carries its reason in one of two fields, and which one depends on
+how far it got: a child that started and died reports through `errorMessage`,
+while a run that failed *before* any child existed — an unknown persona, a
+`model` that cannot be one — has only `stderr`. Both the tool result and every
+TUI surface read `displayedFailureReason`, which consults both, so the reason
+the calling agent is given and the reason you see are the same string.
+
+They were not always. The renderers used to read `errorMessage` alone, so a
+pre-dispatch failure has no reason *and* no messages and came out as a bare
+`(no output)` under a red ✗, while the model was handed the full explanation.
+Silence in the one surface a human is watching is the expensive kind, and one
+shared function is what stops the two drifting again. `(no output)` now means
+what it says: the run produced nothing and had nothing to say about why.
+
+Chain steps and parallel tasks report the same way, per step and per task —
+that is where it matters most, since a single bad `model` fails only its own
+task and the batch otherwise looks merely incomplete. A task still running is
+never labelled, its non-zero sentinel exit code notwithstanding.
+
 ## Agents
 
 Agents are discovered from Markdown files with frontmatter, in two places:
@@ -268,7 +289,7 @@ The logic that does not need a running pi is split into pure modules with coloca
 
 The `globalThis` route key is itself a clean test seam: `routes.test.ts` sets `__piModelRouteResolvers` directly, with no mocking machinery.
 
-`run.test.ts` covers the one child-process seam both tools reach the child through — timeout, abort, the partial result each returns, the dispatch arguments, and which of `--system-prompt` / `--append-system-prompt` a run gets. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated.
+`run.test.ts` covers the one child-process seam both tools reach the child through — timeout, abort, the partial result each returns, the dispatch arguments, and which of `--system-prompt` / `--append-system-prompt` a run gets. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated. It also covers `displayedFailureReason`, which exists as a named function mainly so the rule every rendered surface follows can be asserted: the renderers build pi TUI widgets and are not otherwise reachable from a test.
 
 `subagent-tool.test.ts` and `oracle-tool.test.ts` cover the composition each tool adds on top: persona lookup and the `Task:` framing for one, and for the other the load-bearing invariants that make the oracle what it is — the fixed read-only tool list, the posture prompt sent as replacing, `--no-skills`, the question passed through verbatim, no `cwd` parameter, and a missing route failing without attempting a run. The oracle's test injects `runAgent` at the same seam where the subagent's injects `spawnChild`.
 

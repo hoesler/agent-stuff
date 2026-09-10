@@ -11,7 +11,14 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { type SpawnChild, spawnAgentRun } from "./run.ts";
+import {
+	displayedFailureReason,
+	emptyUsage,
+	RUNNING_EXIT_CODE,
+	runFailureReason,
+	type SpawnChild,
+	spawnAgentRun,
+} from "./run.ts";
 
 /** A child that emits one assistant message, then hangs until it is killed. */
 const hangingChild: SpawnChild = () => {
@@ -197,5 +204,58 @@ describe("skills", () => {
 
 		await run({ noSkills: true, spawnChild: capture });
 		assert.ok(captured.includes("--no-skills"));
+	});
+});
+
+/**
+ * The reason a failure is reported with, read by both the tool result the
+ * calling agent receives and every TUI surface. Two fields can carry it, and
+ * which one is populated depends on how far the run got — so a reader that
+ * consults only one of them goes silent for a whole class of failure.
+ */
+describe("runFailureReason", () => {
+	const base = { exitCode: 1, messages: [], stderr: "", usage: emptyUsage() };
+
+	test("prefers errorMessage, which is how a started child reports", () => {
+		assert.equal(runFailureReason({ ...base, errorMessage: "Timed out after 5s." }), "Timed out after 5s.");
+	});
+
+	test("falls back to stderr, the only field a pre-dispatch failure sets", () => {
+		assert.equal(runFailureReason({ ...base, stderr: '  Invalid model "medium"\n' }), 'Invalid model "medium"');
+	});
+
+	test("is empty when a run left no account of itself", () => {
+		assert.equal(runFailureReason(base), "");
+	});
+});
+
+/**
+ * What a rendered surface shows. One rule for every mode, so a failure cannot
+ * be reported in the tool result and stay invisible in the TUI — which is what
+ * happened while the renderers read `errorMessage` alone and a failure that
+ * happened before any child existed set only `stderr`.
+ */
+describe("displayedFailureReason", () => {
+	const base = { exitCode: 1, messages: [], stderr: "", usage: emptyUsage() };
+
+	test("shows the reason a pre-dispatch failure left in stderr", () => {
+		assert.equal(displayedFailureReason({ ...base, stderr: 'Unknown agent: "ghost".' }), 'Unknown agent: "ghost".');
+	});
+
+	test("shows the reason a started child left in errorMessage", () => {
+		const timedOut = { ...base, exitCode: 0, stopReason: "timeout", errorMessage: "Timed out after 5s." };
+		assert.equal(displayedFailureReason(timedOut), "Timed out after 5s.");
+	});
+
+	test("says nothing about a run that succeeded", () => {
+		assert.equal(displayedFailureReason({ ...base, exitCode: 0, stderr: "a harmless warning" }), "");
+	});
+
+	// A live parallel batch re-renders on every update, and the running sentinel
+	// is a non-zero exit code — so without the guard a task that merely wrote to
+	// stderr would be labelled an error while it was still working.
+	test("says nothing about a task that is still running", () => {
+		const running = { ...base, exitCode: RUNNING_EXIT_CODE, stderr: "a warning, mid-flight" };
+		assert.equal(displayedFailureReason(running), "");
 	});
 });

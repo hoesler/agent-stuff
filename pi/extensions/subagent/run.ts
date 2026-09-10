@@ -90,12 +90,44 @@ export function isFailedRun(run: AgentRunResult): boolean {
 }
 
 /**
+ * Why a run failed, in one line, or `""` when it left no account of itself.
+ *
+ * Two fields can carry it and both are optional in practice: a child that died
+ * reports through `errorMessage`, while a run that failed *before* any child
+ * existed — an unknown persona, a model that cannot be one — has only `stderr`.
+ * Reading one field and not the other silently drops a whole class of failure,
+ * which is exactly what the TUI used to do while the model was told the truth.
+ * One function, so every surface fails the same way.
+ */
+export function runFailureReason(run: AgentRunResult): string {
+	return run.errorMessage || run.stderr.trim() || "";
+}
+
+/** The sentinel `exitCode` a result carries while its child is still running. */
+export const RUNNING_EXIT_CODE = -1;
+
+/**
+ * The reason to show for a run, or `""` when there is nothing to show — the
+ * one rule every rendered surface uses, so none of them can go quiet about a
+ * failure another one reports.
+ *
+ * The running sentinel is excluded because `isFailedRun` counts it as a
+ * failure: it is not zero. A live parallel batch re-renders on every update,
+ * so without that guard a task that merely wrote to stderr would be labelled
+ * an error while it was still working.
+ */
+export function displayedFailureReason(run: AgentRunResult): string {
+	if (run.exitCode === RUNNING_EXIT_CODE) return "";
+	return isFailedRun(run) ? runFailureReason(run) : "";
+}
+
+/**
  * Why a run failed, plus whatever it produced first. A run killed part-way
  * usually has useful partial output, and for a timeout that partial output is
  * the only signal the caller has for choosing a larger budget next time.
  */
 export function describeRunFailure(run: AgentRunResult): string {
-	const reason = run.errorMessage || run.stderr.trim() || "";
+	const reason = runFailureReason(run);
 	const partial = getFinalOutput(run.messages).trim();
 	if (reason && partial) return `${reason}\n\nPartial output before termination:\n${partial}`;
 	return reason || partial || "(no output)";

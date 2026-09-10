@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import type { AgentConfig, AgentDiscoveryResult } from "./agents.ts";
+import { displayedFailureReason } from "./run.ts";
 import { createSubagentTool, runSingleAgent, type SpawnChild } from "./subagent-tool.ts";
 
 const agents = [
@@ -53,6 +54,33 @@ describe("unknown agent", () => {
 		assert.equal(spawned, false);
 		assert.equal(result.exitCode, 1);
 		assert.match(result.stderr, /Unknown agent: "scowt"/);
+	});
+});
+
+/**
+ * A run that fails before a child exists has no `errorMessage` and no messages
+ * — only `stderr`. The TUI used to render exactly those two fields and nothing
+ * else, so both branches below reached the user as a bare "(no output)" while
+ * the calling agent was handed the explanation. Anything that renders a failure
+ * goes through `displayedFailureReason`, so asserting it is non-empty is the guard.
+ */
+describe("a failure that happens before any child is spawned", () => {
+	const spawnChild = (() => quickChild([], "")) as SpawnChild;
+
+	test("an unknown persona still carries a renderable reason", async () => {
+		const result = await run({ agentName: "scowt", spawnChild });
+
+		assert.equal(result.messages.length, 0, "no messages, so the renderer has only the reason");
+		assert.equal(result.errorMessage, undefined, "no child ran, so nothing set errorMessage");
+		assert.match(displayedFailureReason(result), /Unknown agent: "scowt"/);
+	});
+
+	test("a model that cannot be one still carries a renderable reason", async () => {
+		const result = await run({ globalModel: "medium", spawnChild });
+
+		assert.equal(result.messages.length, 0);
+		assert.equal(result.errorMessage, undefined);
+		assert.match(displayedFailureReason(result), /that is a thinking level, not a model/);
 	});
 });
 
