@@ -10,22 +10,6 @@ export type Target =
   | { kind: "commit"; sha: string }
   | { kind: "raw"; tokens: string[] };
 
-export type PresetValue = "workingTree" | "staged" | "baseBranch" | "commit";
-
-export interface PickerItem {
-  value: PresetValue;
-  label: string;
-  description: string;
-}
-
-/** Keep this order stable: the picker's smart default is chosen by value. */
-export const TARGET_PRESETS: readonly PickerItem[] = [
-  { value: "workingTree", label: "Review the working tree", description: "" },
-  { value: "staged", label: "Review staged changes", description: "--staged" },
-  { value: "baseBranch", label: "Review against a base branch", description: "(local)" },
-  { value: "commit", label: "Review a commit", description: "" },
-];
-
 /** Copies the tokens, so a caller reusing its parse buffer cannot mutate a stored target. */
 export function rawTarget(tokens: string[]): Target {
   return { kind: "raw", tokens: [...tokens] };
@@ -62,9 +46,4 @@ export function targetLabel(target: Target): string {
     case "raw":
       return target.tokens.join(" ");
   }
-}
-
-/** The same reasoning `/review` applies: review what is uncommitted if there is any. */
-export function smartDefaultValue(dirty: boolean): PresetValue {
-  return dirty ? "workingTree" : "baseBranch";
 }

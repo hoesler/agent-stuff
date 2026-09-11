@@ -1,16 +1,18 @@
 # hunk
 
-`/hunk` reviews a changeset in a live [Hunk](https://www.hunk.dev) window, leaving findings as inline notes. Run `/hunk fix` to address the notes you left, replying on each line to mark them handled. The agent adopts Hunk's own skill at startup, so its CLI knowledge tracks the installed binary.
+`/hunk` opens a changeset in a live [Hunk](https://www.hunk.dev) window — for the agent to review, leaving findings as inline notes, or for you to read yourself. Run `/hunk fix` to address the notes you left, replying on each line to mark them handled. The agent adopts Hunk's own skill at startup, so its CLI knowledge tracks the installed binary.
 
 ## Forms
 
 | Command | Meaning |
 | --- | --- |
-| `/hunk` | Auto mode: try to address pending notes in an open Hunk window, or if none, prompt to pick a changeset and review it. |
-| `/hunk <target>` | Review mode with a specific target: same as `/hunk review <target>`. |
-| `/hunk review` | Review mode: pick a changeset and review it, opening or reloading a Hunk window. |
-| `/hunk review <target>` | Review mode with a specific target: `diff`, `diff --staged`, `diff <branch>...HEAD`, `show <commit>`, or any other Hunk argument. |
-| `/hunk fix` | Fix mode: collect notes left in the Hunk window and address each one. |
+| `/hunk` | The menu: what to look at, and whether the agent reviews it or you do. |
+| `/hunk <target>` | Review a specific target: same as `/hunk review <target>`. |
+| `/hunk review` | Pick a changeset and review it, opening or reloading a Hunk window. |
+| `/hunk review <target>` | Review a specific target: `diff`, `diff --staged`, `diff <branch>...HEAD`, `show <commit>`, or any other Hunk argument. |
+| `/hunk open` | Pick a changeset and open it in Hunk, with no agent review. |
+| `/hunk open <target>` | Open a specific target in Hunk. |
+| `/hunk fix` | Collect the notes left in the Hunk window and address each one. |
 | `--session <id>` | Use a specific Hunk session instead of matching by repository. Append to any command form. |
 
 ## What it does
@@ -21,14 +23,29 @@ You review the changeset, leaving notes on code that needs attention. Notes are 
 
 The addressed set lives in the session only. Closing and relaunching Hunk makes every note read as new again, so you can re-review one diff multiple times.
 
-## Auto mode behavior
+## The menu
 
-Bare `/hunk` (with no arguments at all) runs in auto mode:
+Bare `/hunk` asks rather than decides:
 
-1. It tries to collect pending notes from the live Hunk window and address them.
-2. If there are no pending notes, or if there is no window open, it proceeds to review mode and prompts you to pick a changeset.
+```
+┌─ Hunk ─────────────────────────────────────────────────────────────┐
+│ → 3 notes you left in Hunk        reply to each, mark them handled │
+│   Uncommitted changes             7 files · hunk diff              │
+│   Staged changes only             2 files · hunk diff --staged     │
+│   This branch vs main             12 files · hunk diff main...HEAD │
+│   A commit…                       choose from the last 15          │
+│   Another branch…                 choose what to compare against   │
+│ enter to review with the agent · o to open it yourself · esc       │
+└────────────────────────────────────────────────────────────────────┘
+```
 
-This means `/hunk` can mean either "fix the notes I left" or "review a changeset" depending on what is live — the agent decides by trying fix first. Providing a target (e.g., `/hunk <target>`) skips auto mode and goes straight to review mode.
+`enter` hands the changeset to the agent; `o` opens it in Hunk and leaves it to you. On the notes row `enter` addresses them and `o` means nothing, so the footer follows the cursor and names only the verbs the highlighted row has.
+
+Rows appear only when they have something in them. A clean working tree has no `Uncommitted changes` row, a branch level with its base has no comparison row, and the notes row is there only while a live window holds notes you have not had answered yet. Whatever is missing is explained in a muted line under the rows — `no Hunk window open for this repository`, `no new notes in wB:p2`, `nothing uncommitted or staged` — and if nothing at all can be offered, the menu does not open.
+
+The base branch behind `This branch vs …` is read from `origin/HEAD`, falling back to a local `main` or `master`. The branch you are on is never offered as its own base; `Another branch…` is there to compare against anything else.
+
+Counts come from `git status --porcelain -b`, `git diff --cached --name-only` and one `git diff --name-only <base>...HEAD`, all read before the menu opens. A git call that fails costs its own row and nothing more.
 
 ## Configuration
 

@@ -1,13 +1,14 @@
 import { rawTarget, type Target } from "./targets.ts";
 
-export type ParsedCommand =
-  | { mode: "auto" | "review" | "fix"; target?: Target; sessionId?: string }
-  | { error: string };
+export type Mode = "menu" | "review" | "open" | "fix";
+
+export type ParsedCommand = { mode: Mode; target?: Target; sessionId?: string } | { error: string };
 
 /**
- * `/hunk [review|fix] [target…] [--session <id>]`. A target implies review,
- * because a target says which changeset to look at and addressing notes never
- * needs one.
+ * `/hunk [review|open|fix] [target…] [--session <id>]`. A target implies
+ * review, because a target says which changeset to look at and addressing
+ * notes never needs one. No arguments at all opens the menu, which is the one
+ * surface that names every form.
  */
 export function parseCommand(args: string): ParsedCommand {
   const tokens = args.trim().split(/\s+/).filter(Boolean);
@@ -25,10 +26,10 @@ export function parseCommand(args: string): ParsedCommand {
     i += 1;
   }
 
-  const withSession = <T extends { mode: "auto" | "review" | "fix"; target?: Target }>(command: T) =>
+  const withSession = <T extends { mode: Mode; target?: Target }>(command: T) =>
     sessionId ? { ...command, sessionId } : command;
 
-  if (rest.length === 0) return withSession({ mode: "auto" });
+  if (rest.length === 0) return withSession({ mode: "menu" });
 
   const [head, ...tail] = rest;
 
@@ -39,8 +40,8 @@ export function parseCommand(args: string): ParsedCommand {
     return withSession({ mode: "fix", target: undefined });
   }
 
-  if (head === "review") {
-    return withSession({ mode: "review", target: tail.length > 0 ? rawTarget(tail) : undefined });
+  if (head === "review" || head === "open") {
+    return withSession({ mode: head, target: tail.length > 0 ? rawTarget(tail) : undefined });
   }
 
   return withSession({ mode: "review", target: rawTarget(rest) });

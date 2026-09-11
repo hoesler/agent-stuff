@@ -10,6 +10,7 @@ import { Container, SelectList, Text, type SelectItem } from "@earendil-works/pi
 import { parseCommand } from "./args.ts";
 import { createCli, type Exec, type HunkCli } from "./cli.ts";
 import { defaultConfig, loadConfig } from "./config.ts";
+import { menuChoice, menuFooter, menuNote, menuRows, type MenuAction } from "./menu.ts";
 import {
   ADDRESSED_ENTRY,
   confirmAddressed,
@@ -19,19 +20,43 @@ import {
   type AddressedState,
 } from "./pending.ts";
 import { fixPrompt, reviewPrompt } from "./prompts.ts";
+import { repoFacts, type RepoFacts } from "./repo.ts";
 import { ensureSession, type Resolution } from "./session.ts";
 import { createSpawn } from "./spawn.ts";
-import {
-  smartDefaultValue,
-  TARGET_PRESETS,
-  targetArgs,
-  targetLabel,
-  type PresetValue,
-  type Target,
-} from "./targets.ts";
+import { targetArgs, targetLabel, type Target } from "./targets.ts";
 import type { HunkConfig, HunkNote } from "./types.ts";
 
 const SPAWN_HINT = "Open a review yourself with `hunk diff`, then run /hunk again.";
+
+/** What a picker reports back: the row, and which of its verbs was pressed. */
+interface Picked {
+  value: string;
+  action: string;
+}
+
+interface PickOptions {
+  title: string;
+  items: SelectItem[];
+  /** A muted line under the rows, for what is missing and why. */
+  note?: string;
+  /** The hint under that, recomputed for whichever row the cursor is on. */
+  footer?: (value: string) => string;
+  /** Raw key data → the action it stands for, read before the list sees it. */
+  keys?: Record<string, string>;
+}
+
+const CONFIRM = "confirm";
+
+/**
+ * What the live window holds. `empty` and `unavailable` are kept apart because
+ * one is a window with nothing new in it and the other is no reading at all —
+ * the menu words them differently, and `/hunk fix` reports them at different
+ * severities.
+ */
+type Probe =
+  | { kind: "notes"; sessionId: string; notes: HunkNote[] }
+  | { kind: "empty"; sessionId: string }
+  | { kind: "unavailable"; message: string };
 
 export default function hunkExtension(pi: ExtensionAPI) {
   let config: HunkConfig = defaultConfig();
@@ -50,61 +75,46 @@ export default function hunkExtension(pi: ExtensionAPI) {
     return result.stdout.trim() || undefined;
   }
 
-  async function isDirty(cwd: string): Promise<boolean> {
-    const result = await pi.exec("git", ["status", "--porcelain"], { cwd });
-    return result.code === 0 && result.stdout.trim().length > 0;
-  }
-
-  async function localBranches(cwd: string): Promise<string[]> {
-    const result = await pi.exec(
-      "git",
-      ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads"],
-      { cwd },
-    );
-    if (result.code !== 0) return [];
-    return result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-  }
-
-  async function currentBranch(cwd: string): Promise<string | undefined> {
-    const result = await pi.exec("git", ["branch", "--show-current"], { cwd });
-    if (result.code !== 0) return undefined;
-    return result.stdout.trim() || undefined;
-  }
-
-  async function recentCommits(cwd: string): Promise<Array<{ sha: string; title: string }>> {
-    const result = await pi.exec("git", ["log", "-n", "15", "--format=%h%x09%s"], { cwd });
-    if (result.code !== 0) return [];
-    return result.stdout
-      .split("\n")
-      .map((line) => line.split("\t"))
-      .filter((parts) => parts.length === 2 && parts[0])
-      .map(([sha, title]) => ({ sha, title }));
-  }
-
   /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `agent-modes` use. */
-  async function pick(ctx: ExtensionCommandContext, title: string, items: SelectItem[], selected: number) {
-    if (items.length === 0) return undefined;
-    return ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
+  async function pick(ctx: ExtensionCommandContext, options: PickOptions): Promise<Picked | undefined> {
+    if (options.items.length === 0) return undefined;
+    return ctx.ui.custom<Picked | undefined>((tui, theme, _kb, done) => {
       const container = new Container();
       container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
-      container.addChild(new Text(theme.fg("accent", theme.bold(title))));
-      const list = new SelectList(items, Math.min(items.length, 10), {
+      container.addChild(new Text(theme.fg("accent", theme.bold(options.title))));
+      const list = new SelectList(options.items, Math.min(options.items.length, 10), {
         selectedPrefix: (text) => theme.fg("accent", text),
         selectedText: (text) => theme.fg("accent", text),
         description: (text) => theme.fg("muted", text),
         scrollInfo: (text) => theme.fg("dim", text),
         noMatch: (text) => theme.fg("warning", text),
       });
-      if (selected >= 0) list.setSelectedIndex(selected);
-      list.onSelect = (item) => done(item.value);
+
+      // The rows are ordered so the first is the likeliest, and the footer has
+      // to name that row's verbs before a key is ever pressed.
+      let selected = options.items[0];
+      const hint = (value: string) => options.footer?.(value) ?? "enter to confirm, esc to cancel";
+      const footer = new Text(theme.fg("dim", hint(selected.value)));
+      list.onSelectionChange = (item) => {
+        selected = item;
+        footer.setText(theme.fg("dim", hint(item.value)));
+        tui.requestRender();
+      };
+      list.onSelect = (item) => done({ value: item.value, action: CONFIRM });
       list.onCancel = () => done(undefined);
+
       container.addChild(list);
-      container.addChild(new Text(theme.fg("dim", "enter to confirm, esc to cancel")));
+      if (options.note) container.addChild(new Text(theme.fg("muted", options.note)));
+      container.addChild(footer);
       container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
       return {
         render: (width: number) => container.render(width),
         invalidate: () => container.invalidate(),
         handleInput: (data: string) => {
+          // Before the list, so a secondary verb is not read as navigation.
+          // Nothing here sets a filter, so plain keys are free to mean this.
+          const action = options.keys?.[data];
+          if (action) return done({ value: selected.value, action });
           list.handleInput(data);
           tui.requestRender();
         },
@@ -112,57 +122,20 @@ export default function hunkExtension(pi: ExtensionAPI) {
     });
   }
 
-  async function pickTarget(ctx: ExtensionCommandContext): Promise<Target | undefined> {
-    const presets = TARGET_PRESETS.map((preset) => ({
-      value: preset.value,
-      label: preset.label,
-      description: preset.description,
-    }));
-    const smart = smartDefaultValue(await isDirty(ctx.cwd));
-    const chosen = await pick(
-      ctx,
-      "Review with Hunk",
-      presets,
-      presets.findIndex((preset) => preset.value === smart),
-    );
-    if (!chosen) return undefined;
+  async function pickCommit(ctx: ExtensionCommandContext, facts: RepoFacts): Promise<Target | undefined> {
+    const picked = await pick(ctx, {
+      title: "Which commit",
+      items: facts.commits.map((commit) => ({ value: commit.sha, label: commit.sha, description: commit.title })),
+    });
+    return picked ? { kind: "commit", sha: picked.value } : undefined;
+  }
 
-    if (chosen === ("workingTree" satisfies PresetValue)) return { kind: "workingTree" };
-    if (chosen === ("staged" satisfies PresetValue)) return { kind: "staged" };
-
-    if (chosen === ("baseBranch" satisfies PresetValue)) {
-      const branches = await localBranches(ctx.cwd);
-      const current = await currentBranch(ctx.cwd);
-      // Never offer the current branch as a base (diffing it against itself is empty).
-      const candidates = current ? branches.filter((name) => name !== current) : branches;
-      if (candidates.length === 0) {
-        ctx.ui.notify(
-          current ? `No other branches to compare against (current branch: ${current}).` : "No local branches to compare against.",
-          "warning",
-        );
-        return undefined;
-      }
-      const branch = await pick(
-        ctx,
-        "Base branch",
-        candidates.map((name) => ({ value: name, label: name, description: "" })),
-        0,
-      );
-      return branch ? { kind: "baseBranch", branch } : undefined;
-    }
-
-    const commits = await recentCommits(ctx.cwd);
-    if (commits.length === 0) {
-      ctx.ui.notify("No commits to review.", "warning");
-      return undefined;
-    }
-    const sha = await pick(
-      ctx,
-      "Commit",
-      commits.map((commit) => ({ value: commit.sha, label: commit.sha, description: commit.title })),
-      0,
-    );
-    return sha ? { kind: "commit", sha } : undefined;
+  async function pickBranch(ctx: ExtensionCommandContext, facts: RepoFacts): Promise<Target | undefined> {
+    const picked = await pick(ctx, {
+      title: "Compare against which branch",
+      items: facts.branches.map((name) => ({ value: name, label: name, description: "" })),
+    });
+    return picked ? { kind: "baseBranch", branch: picked.value } : undefined;
   }
 
   async function resolve(ctx: ExtensionCommandContext, target: Target | undefined, sessionId: string | undefined) {
@@ -183,13 +156,11 @@ export default function hunkExtension(pi: ExtensionAPI) {
   }
 
   /** Takes the non-session arms only, so the union stays discriminated. */
-  function reportUnresolved(ctx: ExtensionCommandContext, resolution: Exclude<Resolution, { kind: "session" }>) {
+  function unresolvedMessage(resolution: Exclude<Resolution, { kind: "session" }>): string {
     if (resolution.kind === "ambiguous") {
-      const ids = resolution.sessionIds.join(", ");
-      ctx.ui.notify(`Several Hunk windows show this repository: ${ids}. Re-run with --session <id>.`, "warning");
-      return;
+      return `Several Hunk windows show this repository: ${resolution.sessionIds.join(", ")}. Re-run with --session <id>.`;
     }
-    ctx.ui.notify(resolution.message, "warning");
+    return resolution.message;
   }
 
   /** The same file `/review` reads, so guidelines written once apply to both. */
@@ -202,10 +173,24 @@ export default function hunkExtension(pi: ExtensionAPI) {
     }
   }
 
-  async function startReview(ctx: ExtensionCommandContext, target: Target, sessionId: string | undefined) {
+  /**
+   * Open the target, and hand it to the agent or to the user. Resolution is
+   * shared: a window is opened or reloaded either way, and only the prompt
+   * tells the two apart.
+   */
+  async function act(
+    ctx: ExtensionCommandContext,
+    target: Target,
+    sessionId: string | undefined,
+    action: MenuAction,
+  ) {
     const resolution = await resolve(ctx, target, sessionId);
     if (resolution.kind !== "session") {
-      reportUnresolved(ctx, resolution);
+      ctx.ui.notify(unresolvedMessage(resolution), "warning");
+      return;
+    }
+    if (action === "open") {
+      ctx.ui.notify(`Opened ${targetLabel(target)} in Hunk. Leave notes there, then run /hunk fix.`, "info");
       return;
     }
     ctx.ui.notify(`Reviewing ${targetLabel(target)} in Hunk.`, "info");
@@ -219,37 +204,98 @@ export default function hunkExtension(pi: ExtensionAPI) {
   }
 
   /**
-   * `undefined` means fix mode could not even look; `{ empty: true }` means it
-   * looked and found nothing new. Auto mode needs those apart: only the second
-   * should fall through to a review.
+   * Reading the live window never spawns one: `ensureSession` without a target
+   * reports an absent window rather than opening an empty one.
    */
-  async function startFix(
-    ctx: ExtensionCommandContext,
-    sessionId: string | undefined,
-    explicit: boolean,
-  ): Promise<{ empty: boolean } | undefined> {
+  async function probeNotes(ctx: ExtensionCommandContext, sessionId: string | undefined): Promise<Probe> {
     const resolution = await resolve(ctx, undefined, sessionId);
-    if (resolution.kind !== "session") {
-      if (explicit) reportUnresolved(ctx, resolution);
-      return undefined;
-    }
+    if (resolution.kind !== "session") return { kind: "unavailable", message: unresolvedMessage(resolution) };
 
     const notes = await cliFor(ctx.cwd).listNotes(resolution.sessionId, "user");
-    if (!notes.ok) {
-      ctx.ui.notify(notes.message, "error");
-      return undefined;
-    }
+    if (!notes.ok) return { kind: "unavailable", message: notes.message };
 
     const pending = pendingNotes(notes.value, restoreAddressed(ctx.sessionManager.getBranch()));
-    if (pending.length === 0) {
-      if (explicit) ctx.ui.notify("No new notes in the Hunk window.", "info");
-      return { empty: true };
+    if (pending.length === 0) return { kind: "empty", sessionId: resolution.sessionId };
+    return { kind: "notes", sessionId: resolution.sessionId, notes: pending };
+  }
+
+  function dispatchFix(ctx: ExtensionCommandContext, sessionId: string, notes: HunkNote[]) {
+    outstandingFix = { sessionId, notes, since: new Date().toISOString() };
+    ctx.ui.notify(`Addressing ${notes.length} note${notes.length === 1 ? "" : "s"} from Hunk.`, "info");
+    pi.sendUserMessage(fixPrompt({ sessionId, notes, author: config.noteAuthor }));
+  }
+
+  /** Why the menu has no notes row, in the words the reading itself produced. */
+  function notesReason(probe: Probe | undefined): string | undefined {
+    if (!probe) return undefined;
+    if (probe.kind === "empty") return `no new notes in ${probe.sessionId}`;
+    if (probe.kind === "unavailable") return probe.message;
+    return undefined;
+  }
+
+  /**
+   * The menu, and equally the target picker the two explicit forms use. Which
+   * verbs a row has is the only difference: bare `/hunk` offers both and the
+   * notes row with them, `/hunk review` and `/hunk open` offer their own.
+   */
+  async function runMenu(
+    ctx: ExtensionCommandContext,
+    sessionId: string | undefined,
+    allowed: readonly MenuAction[],
+  ) {
+    const offersNotes = allowed.length > 1;
+    const [facts, probe] = await Promise.all([
+      repoFacts({ exec }, ctx.cwd),
+      offersNotes ? probeNotes(ctx, sessionId) : Promise.resolve(undefined),
+    ]);
+
+    const state = {
+      facts,
+      notes: probe?.kind === "notes" ? probe.notes.length : 0,
+      notesReason: notesReason(probe),
+    };
+    const rows = menuRows(state);
+    const note = menuNote(state);
+    if (rows.length === 0) {
+      const verb = allowed.includes("review") ? "review" : "open";
+      ctx.ui.notify(`Nothing to ${verb}${note ? ` — ${note}` : ""}. ${SPAWN_HINT}`, "info");
+      return;
     }
 
-    outstandingFix = { sessionId: resolution.sessionId, notes: pending, since: new Date().toISOString() };
-    ctx.ui.notify(`Addressing ${pending.length} note${pending.length === 1 ? "" : "s"} from Hunk.`, "info");
-    pi.sendUserMessage(fixPrompt({ sessionId: resolution.sessionId, notes: pending, author: config.noteAuthor }));
-    return { empty: false };
+    const picked = await pick(ctx, {
+      title: "Hunk",
+      items: rows.map((row) => row.item),
+      note,
+      footer: (value) => menuFooter(value, allowed),
+      // Matched whole, so the SS3 arrow keys (`\x1bOA`) cannot read as an `O`.
+      keys: allowed.includes("open") && allowed.includes("review") ? { o: "open", O: "open" } : undefined,
+    });
+    if (!picked) {
+      ctx.ui.notify(`Cancelled. ${SPAWN_HINT}`, "info");
+      return;
+    }
+
+    const choice = menuChoice(rows, picked.value);
+    if (!choice) return;
+    if (choice.kind === "notes") {
+      if (probe?.kind === "notes") dispatchFix(ctx, probe.sessionId, probe.notes);
+      return;
+    }
+
+    const target =
+      choice.kind === "target"
+        ? choice.target
+        : choice.kind === "pickCommit"
+          ? await pickCommit(ctx, facts)
+          : await pickBranch(ctx, facts);
+    if (!target) {
+      ctx.ui.notify(`Cancelled. ${SPAWN_HINT}`, "info");
+      return;
+    }
+
+    // An explicit form has one verb, so its confirm means that verb.
+    const action: MenuAction = picked.action === "open" || !allowed.includes("review") ? "open" : "review";
+    await act(ctx, target, sessionId, action);
   }
 
   /**
@@ -305,7 +351,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("hunk", {
-    description: "Review a changeset in Hunk, or address the notes left there. Usage: /hunk [review|fix] [target]",
+    description: "Open a changeset in Hunk to review, or address the notes left there. Usage: /hunk [review|open|fix] [target]",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/hunk requires interactive mode", "error");
@@ -319,21 +365,20 @@ export default function hunkExtension(pi: ExtensionAPI) {
       }
 
       if (parsed.mode === "fix") {
-        await startFix(ctx, parsed.sessionId, true);
+        const probe = await probeNotes(ctx, parsed.sessionId);
+        if (probe.kind === "unavailable") ctx.ui.notify(probe.message, "warning");
+        else if (probe.kind === "empty") ctx.ui.notify("No new notes in the Hunk window.", "info");
+        else dispatchFix(ctx, probe.sessionId, probe.notes);
         return;
       }
 
-      if (parsed.mode === "auto") {
-        const attempted = await startFix(ctx, parsed.sessionId, false);
-        if (attempted && !attempted.empty) return;
-      }
-
-      const target = parsed.mode === "review" && parsed.target ? parsed.target : await pickTarget(ctx);
-      if (!target) {
-        ctx.ui.notify(`Cancelled. ${SPAWN_HINT}`, "info");
+      if (parsed.target) {
+        await act(ctx, parsed.target, parsed.sessionId, parsed.mode === "open" ? "open" : "review");
         return;
       }
-      await startReview(ctx, target, parsed.sessionId);
+
+      const allowed: readonly MenuAction[] = parsed.mode === "menu" ? ["review", "open"] : [parsed.mode];
+      await runMenu(ctx, parsed.sessionId, allowed);
     },
   });
 }
