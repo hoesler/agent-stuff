@@ -3,9 +3,9 @@ import { test } from "node:test";
 import { parseCommand } from "./args.ts";
 import { targetArgs } from "./targets.ts";
 
-test("no arguments means decide from live state", () => {
-  assert.deepEqual(parseCommand(""), { mode: "auto" });
-  assert.deepEqual(parseCommand("   "), { mode: "auto" });
+test("no arguments opens the menu", () => {
+  assert.deepEqual(parseCommand(""), { mode: "menu" });
+  assert.deepEqual(parseCommand("   "), { mode: "menu" });
 });
 
 test("a bare target implies review", () => {
@@ -26,6 +26,16 @@ test("review forwards every remaining token, pathspec included", () => {
     "--",
     "src/ui",
   ]);
+});
+
+test("open with no target leaves the target for the picker", () => {
+  assert.deepEqual(parseCommand("open"), { mode: "open", target: undefined });
+});
+
+test("open forwards its target the way review does", () => {
+  const parsed = parseCommand("open main...HEAD");
+  assert.equal("mode" in parsed && parsed.mode, "open");
+  assert.deepEqual("mode" in parsed && parsed.target && targetArgs(parsed.target), ["diff", "main...HEAD"]);
 });
 
 test("fix takes no target", () => {
@@ -49,10 +59,16 @@ test("--session with no value is an error", () => {
   assert.deepEqual(parseCommand("--session"), { error: "--session needs a session id." });
 });
 
-test("a bare --session still leaves auto mode when nothing else is given", () => {
-  assert.deepEqual(parseCommand("--session abc"), { mode: "auto", sessionId: "abc" });
+test("a bare --session still opens the menu when nothing else is given", () => {
+  assert.deepEqual(parseCommand("--session abc"), { mode: "menu", sessionId: "abc" });
 });
 
 test("a repeated --session takes the last one", () => {
-  assert.deepEqual(parseCommand("--session abc --session def"), { mode: "auto", sessionId: "def" });
+  assert.deepEqual(parseCommand("--session abc --session def"), { mode: "menu", sessionId: "def" });
+});
+
+test("a head nobody recognizes stays a raw target, so Hunk reports its own error", () => {
+  const parsed = parseCommand("auto");
+  assert.equal("mode" in parsed && parsed.mode, "review");
+  assert.deepEqual("mode" in parsed && parsed.target && targetArgs(parsed.target), ["diff", "auto"]);
 });
