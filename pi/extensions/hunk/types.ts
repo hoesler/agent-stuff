@@ -1,7 +1,18 @@
-/** Where a window may be spawned from, when none is live. */
-export type SpawnMode = "ghostty" | "never";
+/**
+ * Whether a window was opened. A failure always carries a reason: every caller
+ * recovers by printing the command for the user to run by hand.
+ */
+export type SpawnOutcome = { ok: true } | { ok: false; message: string };
 
-export const SPAWN_MODES: readonly SpawnMode[] = ["ghostty", "never"];
+/**
+ * Where a window may be spawned from, when none is live. `auto` picks herdr
+ * when pi is running inside one of its panes: a Ghostty split would otherwise
+ * open the diff outside the multiplexer's own layout, where the user is not
+ * looking.
+ */
+export type SpawnMode = "auto" | "herdr" | "ghostty" | "never";
+
+export const SPAWN_MODES: readonly SpawnMode[] = ["auto", "herdr", "ghostty", "never"];
 
 /**
  * A fully resolved configuration. Every field has a value: the extension works
@@ -12,6 +23,8 @@ export interface HunkConfig {
   version: 1;
   /** Path to the binary, for installs outside PATH. */
   hunkBin: string;
+  /** Path to the herdr binary, for installs outside PATH. */
+  herdrBin: string;
   /** `never` always prints the command instead of opening a window. */
   spawn: SpawnMode;
   /** `--author` on notes the agent is told to write. */
@@ -20,7 +33,8 @@ export interface HunkConfig {
 
 export const DEFAULTS = {
   hunkBin: "hunk",
-  spawn: "ghostty" as SpawnMode,
+  herdrBin: "herdr",
+  spawn: "auto" as SpawnMode,
   noteAuthor: "pi",
 } as const;
 

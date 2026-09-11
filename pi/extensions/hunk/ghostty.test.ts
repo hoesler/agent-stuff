@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Exec } from "./cli.ts";
-import { shellQuote, spawnWindow, startupInput } from "./ghostty.ts";
+import { spawnWindow } from "./ghostty.ts";
 
 function fakeExec(outcome: { stdout?: string; stderr?: string; code?: number; killed?: boolean }) {
   const calls: Array<{ command: string; args: string[]; options?: { timeout?: number } }> = [];
@@ -11,16 +11,6 @@ function fakeExec(outcome: { stdout?: string; stderr?: string; code?: number; ki
   };
   return { exec, calls };
 }
-
-test("shellQuote wraps in single quotes and escapes embedded ones", () => {
-  assert.equal(shellQuote("src/ui"), "'src/ui'");
-  assert.equal(shellQuote("it's"), `'it'"'"'s'`);
-  assert.equal(shellQuote(""), "''");
-});
-
-test("the startup input is one runnable line, newline terminated", () => {
-  assert.equal(startupInput("hunk", ["diff", "main...HEAD"]), "'hunk' 'diff' 'main...HEAD'\n");
-});
 
 test("a non-darwin platform refuses without invoking osascript", async () => {
   const { exec, calls } = fakeExec({ code: 0 });

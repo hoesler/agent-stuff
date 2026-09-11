@@ -1,6 +1,5 @@
 import type { HunkCli } from "./cli.ts";
-import type { SpawnOutcome } from "./ghostty.ts";
-import type { HunkSession } from "./types.ts";
+import type { HunkSession, SpawnOutcome } from "./types.ts";
 
 export const POLL_INTERVAL_MS = 200;
 export const POLL_CEILING_MS = 5000;

@@ -1,4 +1,6 @@
 import type { Exec } from "./cli.ts";
+import { startupInput } from "./command.ts";
+import type { SpawnOutcome } from "./types.ts";
 
 /**
  * Adapted from `mitsuhiko/agent-stuff`'s `split-fork.ts`: a new surface
@@ -28,22 +30,10 @@ export const GHOSTTY_SPLIT_SCRIPT = `on run argv
 	end tell
 end run`;
 
-export function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
-/** What Ghostty types into the new surface. The newline runs it. */
-export function startupInput(hunkBin: string, target: string[]): string {
-  return `${[hunkBin, ...target].map(shellQuote).join(" ")}\n`;
-}
-
-export interface SpawnDeps {
+export interface GhosttyDeps {
   exec: Exec;
   platform: string;
 }
-
-export type SpawnOutcome = { ok: true } | { ok: false; message: string };
 
 /**
  * Nothing else in the extension assumes Ghostty. A window the user opened by
@@ -51,7 +41,7 @@ export type SpawnOutcome = { ok: true } | { ok: false; message: string };
  * recoverable by printing the command for the user to run.
  */
 export async function spawnWindow(
-  deps: SpawnDeps,
+  deps: GhosttyDeps,
   options: { cwd: string; hunkBin: string; target: string[] },
 ): Promise<SpawnOutcome> {
   if (deps.platform !== "darwin") {
