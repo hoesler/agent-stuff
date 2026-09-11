@@ -10,7 +10,6 @@ import { Container, SelectList, Text, type SelectItem } from "@earendil-works/pi
 import { parseCommand } from "./args.ts";
 import { createCli, type Exec, type HunkCli } from "./cli.ts";
 import { defaultConfig, loadConfig } from "./config.ts";
-import { spawnWindow } from "./ghostty.ts";
 import {
   ADDRESSED_ENTRY,
   confirmAddressed,
@@ -21,6 +20,7 @@ import {
 } from "./pending.ts";
 import { fixPrompt, reviewPrompt } from "./prompts.ts";
 import { ensureSession, type Resolution } from "./session.ts";
+import { createSpawn } from "./spawn.ts";
 import {
   smartDefaultValue,
   TARGET_PRESETS,
@@ -171,10 +171,10 @@ export default function hunkExtension(pi: ExtensionAPI) {
         cli: cliFor(ctx.cwd),
         gitRoot: () => gitRoot(ctx.cwd),
         realpath: (path) => realpath(path),
-        spawn: (args) =>
-          config.spawn === "never"
-            ? Promise.resolve({ ok: false as const, message: "Opening a window is disabled (`spawn: never`)." })
-            : spawnWindow({ exec, platform: process.platform }, { cwd: ctx.cwd, hunkBin: config.hunkBin, target: args }),
+        spawn: createSpawn(
+          { exec, env: process.env, platform: process.platform },
+          { config, cwd: ctx.cwd },
+        ),
         sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
         now: () => Date.now(),
       },

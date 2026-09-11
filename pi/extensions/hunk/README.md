@@ -15,7 +15,7 @@
 
 ## What it does
 
-The extension runs Hunk in your own terminal. When you run `/hunk review`, it reuses a live Hunk window if one is open for this repository and reloads it with the target, or spawns a new Ghostty right-split on macOS (one terminal per repository). If you open a window yourself with `hunk diff`, running `/hunk` finds it automatically.
+The extension runs Hunk in your own terminal. When you run `/hunk review`, it reuses a live Hunk window if one is open for this repository and reloads it with the target, or opens one beside you (one terminal per repository): a [herdr](https://herdr.dev) pane when pi is running inside herdr, otherwise a Ghostty right-split on macOS. If you open a window yourself with `hunk diff`, running `/hunk` finds it automatically.
 
 You review the changeset, leaving notes on code that needs attention. Notes are never removed by the extension — only marked as handled when the agent replies on the same file, side, and line with `comment add`, using `--author <noteAuthor>` to sign the reply.
 
@@ -37,8 +37,20 @@ Configuration lives in `~/.pi/agent/hunk.json` (user-scoped) or `.pi/hunk.json` 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `hunkBin` | string | `hunk` | Path to the Hunk binary. Use this if your install is outside PATH. |
-| `spawn` | `ghostty` \| `never` | `ghostty` | Whether to spawn a new Ghostty terminal if no window is open. `never` prints the command instead. |
+| `herdrBin` | string | `herdr` | Path to the herdr binary, for the same reason. |
+| `spawn` | `auto` \| `herdr` \| `ghostty` \| `never` | `auto` | Where to open a window when none is live. |
 | `noteAuthor` | string | `pi` | Author name stamped on notes the agent writes (`--author <noteAuthor>`). |
+
+### Spawn modes
+
+| Mode | What it opens |
+| --- | --- |
+| `auto` | A herdr pane when pi is running inside herdr, otherwise a Ghostty split. |
+| `herdr` | Always a herdr pane. Fails, rather than falling back, when pi is not inside one. |
+| `ghostty` | Always a Ghostty split, even inside herdr. |
+| `never` | Nothing — prints the command for you to run. |
+
+Whatever the mode, a failure to open a window is never fatal: the extension prints `hunk <target>` for you to run yourself, and `/hunk` picks the window up from there.
 
 Example config:
 
@@ -50,6 +62,19 @@ Example config:
 }
 ```
 
+### herdr
+
+In herdr mode the extension splits *your own* pane, so the diff lands in the layout you are looking at:
+
+```bash
+herdr pane split --current --direction right --cwd <repo> --focus
+herdr pane run <new-pane-id> 'hunk diff'
+```
+
+Both calls go through the `herdr` binary, which speaks the [socket API](https://herdr.dev/docs/socket-api/). `pane run` is what sends the command text and Enter as one submission, honoring the pane's live bracketed-paste mode.
+
+herdr sets `HERDR_ENV=1` in every pane it manages, and that is how the extension knows it is inside one. Driving a herdr session from outside it is not supported, so a missing `HERDR_ENV` is reported rather than worked around.
+
 ## What it leaves alone
 
 - **User notes**: The extension never removes notes, even when fixing them. Only replies mark them addressed.
@@ -60,7 +85,7 @@ Example config:
 ## Requirements
 
 - **Hunk 0.18.2** or later.
-- **Ghostty** and **macOS** to spawn windows. Without them, `/hunk` prints the command for you to run by hand.
+- To open a window: either **herdr** with pi running inside one of its panes, or **Ghostty** on **macOS**. With neither, `/hunk` prints the command for you to run by hand.
 
 ## Attribution
 

@@ -39,7 +39,8 @@ test("defaults are the documented ones", () => {
   assert.deepEqual(defaultConfig(), {
     version: 1,
     hunkBin: "hunk",
-    spawn: "ghostty",
+    herdrBin: "herdr",
+    spawn: "auto",
     noteAuthor: "pi",
   });
 });
@@ -56,7 +57,20 @@ test("an unknown property is an error, not a silent ignore", () => {
 });
 
 test("an unknown spawn mode names the allowed ones", () => {
-  assert.throws(() => parseConfig({ spawn: "iterm" }, "/c.json"), /expected one of ghostty, never/);
+  assert.throws(
+    () => parseConfig({ spawn: "iterm" }, "/c.json"),
+    /expected one of auto, herdr, ghostty, never/,
+  );
+});
+
+test("every documented spawn mode parses", () => {
+  for (const mode of ["auto", "herdr", "ghostty", "never"]) {
+    assert.equal(parseConfig({ spawn: mode }, "/c.json").spawn, mode);
+  }
+});
+
+test("an empty herdrBin is rejected rather than producing an unrunnable command", () => {
+  assert.throws(() => parseConfig({ herdrBin: "  " }, "/c.json"), /expected a non-empty string/);
 });
 
 test("an empty hunkBin is rejected rather than producing an unrunnable command", () => {
@@ -85,7 +99,7 @@ test("a malformed file reports the error and still yields a usable config", asyn
     projectTrusted: false,
   });
   assert.equal(snapshot.errors.length, 1);
-  assert.equal(snapshot.config.spawn, "ghostty");
+  assert.equal(snapshot.config.spawn, "auto");
 });
 
 test("later config files override only the keys they name, preserving earlier keys", async () => {
@@ -104,6 +118,7 @@ test("later config files override only the keys they name, preserving earlier ke
   assert.deepEqual(snapshot.config, {
     version: 1,
     hunkBin: "hunk",
+    herdrBin: "herdr",
     spawn: "never",
     noteAuthor: "reviewer",
   });
