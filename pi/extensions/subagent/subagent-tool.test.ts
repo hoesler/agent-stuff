@@ -10,9 +10,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
+import type { EventBus } from "@earendil-works/pi-coding-agent";
+import { HERDR_BLOCKED_EVENT } from "../herdr-blocked/blocked.ts";
 import type { AgentConfig, AgentDiscoveryResult } from "./agents.ts";
 import { displayedFailureReason } from "./run.ts";
-import { createSubagentTool, runSingleAgent, type SpawnChild } from "./subagent-tool.ts";
+import { createSubagentTool, runSingleAgent, type SpawnChild, TRUST_PROMPT_TITLE } from "./subagent-tool.ts";
 
 const agents = [
 	{
@@ -257,8 +259,9 @@ describe("execute", () => {
 		params: unknown,
 		ctx: unknown,
 		spawnChild?: SpawnChild,
+		events?: EventBus,
 	): Promise<ExecuteResult> {
-		const tool = createSubagentTool(result, { spawnChild });
+		const tool = createSubagentTool(result, { spawnChild, events });
 		const outcome = await tool.execute(
 			"call-id",
 			params as never,
@@ -518,6 +521,53 @@ describe("execute", () => {
 			);
 
 			assert.deepEqual(tasks, ["Task: do a thing"]);
+		});
+
+		/** A bus that records what herdr would have been told. */
+		function recordingBus() {
+			const sent: { channel: string; data: unknown }[] = [];
+			const events: EventBus = { emit: (channel, data) => void sent.push({ channel, data }), on: () => () => {} };
+			return { sent, events };
+		}
+
+		test("the confirmation reports the pane as blocked for as long as it is open", async () => {
+			const { spawnChild } = children("done");
+			const { sent, events } = recordingBus();
+			let whileOpen: unknown[] = [];
+			const ctx = {
+				cwd,
+				hasUI: true,
+				ui: {
+					confirm: async () => {
+						whileOpen = sent.map((s) => s.data);
+						return true;
+					},
+				},
+			};
+
+			await execute(
+				discovery(projectAgent("repo-agent")),
+				{ agent: "repo-agent", task: "do a thing" },
+				ctx,
+				spawnChild,
+				events,
+			);
+
+			assert.deepEqual(whileOpen, [{ active: true, label: TRUST_PROMPT_TITLE }]);
+			assert.deepEqual(sent, [
+				{ channel: HERDR_BLOCKED_EVENT, data: { active: true, label: TRUST_PROMPT_TITLE } },
+				{ channel: HERDR_BLOCKED_EVENT, data: { active: false } },
+			]);
+		});
+
+		test("a run with nothing to confirm reports no block at all", async () => {
+			const { spawnChild } = children("done");
+			const { sent, events } = recordingBus();
+			const { ctx } = ui(true);
+
+			await execute(discovery(), { agent: "stub", task: "do a thing" }, ctx, spawnChild, events);
+
+			assert.deepEqual(sent, []);
 		});
 	});
 });
