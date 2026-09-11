@@ -65,7 +65,7 @@ export default function (pi: ExtensionAPI) {
 		includeProject: false,
 	});
 	let fingerprint = catalogFingerprint(discovery);
-	pi.registerTool(createSubagentTool(discovery));
+	pi.registerTool(createSubagentTool(discovery, { events: pi.events }));
 	pi.registerTool(createOracleTool());
 
 	pi.on("session_start", (_event, ctx) => {
@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI) {
 			// `registerTool` is keyed by tool name, so re-registering replaces the
 			// definition and refreshes the live tool list. Sync after it, never
 			// before: a re-registration can put the name back into the active list.
-			pi.registerTool(createSubagentTool(discovery));
+			pi.registerTool(createSubagentTool(discovery, { events: pi.events }));
 		}
 		syncAvailability(pi, discovery);
 	});

@@ -12,9 +12,10 @@
 
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AgentToolResult, getMarkdownTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, type EventBus, getMarkdownTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { type TSchema, Type } from "typebox";
+import { whileBlocked } from "../herdr-blocked/blocked.ts";
 import { type AgentConfig, type AgentDiscoveryResult, type AgentSource, suggestAgentName } from "./agents.ts";
 import { buildAgentNameSchema, buildToolDescription, formatAgentNames } from "./catalog.ts";
 import { type DisplayItem, formatToolCall, formatUsageStats, getDisplayItems } from "./display.ts";
@@ -39,6 +40,13 @@ import {
 
 /** The name the tool registers under, and the name the active list carries. */
 export const SUBAGENT_TOOL_NAME = "subagent";
+
+/**
+ * Title of the project-agent trust confirmation, and the label herdr shows
+ * while it is open. One constant so the pane cannot name a prompt the prompt
+ * does not name itself.
+ */
+export const TRUST_PROMPT_TITLE = "Run project-local agents?";
 
 /**
  * Persona files this package ships as starting points. They are examples to
@@ -340,11 +348,16 @@ function catalogFingerprint(result: AgentDiscoveryResult): string {
  * `deps.spawnChild` is the same seam `run.ts` documents and `runSingleAgent`
  * already takes, lifted to the factory so the orchestration around them — mode
  * selection, the trust gate, `{previous}` substitution, timeout precedence —
- * can be exercised without a running pi. Production passes nothing.
+ * can be exercised without a running pi. Production leaves it unset.
+ *
+ * `deps.events` is pi's bus, which pi hands to extensions and not to tools, so
+ * `index.ts` passes it in at registration. It carries one thing: the trust
+ * confirmation reports itself blocked on it, for `herdr-blocked` to forward to
+ * herdr. A tool built without it prompts exactly as before and reports nothing.
  */
 export function createSubagentTool(
 	discovery: AgentDiscoveryResult,
-	deps: { spawnChild?: SpawnChild } = {},
+	deps: { spawnChild?: SpawnChild; events?: EventBus } = {},
 ): ToolDefinition<TSchema, SubagentDetails> {
 	const agents = discovery.agents;
 
@@ -399,9 +412,14 @@ export function createSubagentTool(
 				if (projectAgentsRequested.length > 0) {
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+					// Reported to herdr for as long as it is up: the run is stopped here
+					// until a human answers, which is not something to discover by
+					// looking at the pane.
+					const ok = await whileBlocked(deps.events, TRUST_PROMPT_TITLE, () =>
+						ctx.ui.confirm(
+							TRUST_PROMPT_TITLE,
+							`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+						),
 					);
 					if (!ok)
 						return {
