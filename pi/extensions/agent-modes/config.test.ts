@@ -169,6 +169,25 @@ describe("routes", () => {
     });
   });
 
+  test("parses distinct on a route target", () => {
+    const config = parseModeConfig(
+      withRoutes({ defaultRoutes: { oracle: { provider: "anthropic", model: "claude-fable-5", distinct: true } } }),
+    );
+    assert.deepEqual(config.defaultRoutes!.oracle, {
+      provider: "anthropic",
+      model: "claude-fable-5",
+      thinkingLevel: "off",
+      distinct: true,
+    });
+  });
+
+  test("rejects a non-boolean distinct", () => {
+    assert.throws(
+      () => parseModeConfig(withRoutes({ defaultRoutes: { oracle: { provider: "p", model: "m", distinct: "yes" } } })),
+      /root\.defaultRoutes\.oracle\.distinct: expected boolean/,
+    );
+  });
+
   test("parses per-mode routes, including false", () => {
     const config = parseModeConfig(withRoutes({}, { routes: { oracle: false } }));
     assert.deepEqual(config.modes[0].routes, { oracle: false });

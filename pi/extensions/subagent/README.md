@@ -125,11 +125,13 @@ Route resolution is not a fifth level in the precedence list above. It is one st
 
 Keys are resolved at dispatch time through an optional, dependency-free contract: a shared `Set` of resolver functions on `globalThis.__piModelRouteResolvers`, published by [`agent-modes`](../agent-modes/README.md) from its per-mode `defaultRoutes` / `modes[].routes` table. The first non-empty answer wins; a resolver that throws is skipped.
 
-Resolving late is the point. A key like `oracle` can mean a different model in each mode, so the answer is read at the moment the child is spawned rather than baked into a system prompt that may predate the current `/mode`.
+Resolving late is the point. A key can mean a different model in each mode — `agent-modes` lets a mode override one, and a `distinct` route like `oracle` drops out entirely while it points at the model already running — so the answer is read at the moment the child is spawned rather than baked into a system prompt that may predate the current `/mode`.
+
+A key that no mode touches is a plain alias: the same model everywhere, whatever `/mode` you are in. That is what makes a persona's `model:` frontmatter dependable — write `model: reviewer` in the file and move the target by editing the route table, without the name going quiet because you switched onto the model behind it.
 
 With no publisher installed, or with a key nothing resolves, the bare value is passed to the child unchanged and the child errors on an unknown model — exactly the behavior before routes existed. The one exception is below.
 
-A **mode id is not a route key**. `agent-modes` publishes only what its `defaultRoutes` and `modes[].routes` tables name; the ids you cycle with `/mode` are not in that set and resolve to nothing. The two are deliberately separate — a route is mode-*relative* and carries a suppression rule that makes no sense for a mode's own absolute target — so accepting ids here would mean exempting them from the rule that defines what a route is. To dispatch to a mode's model, pass that mode's `provider/model:thinkingLevel` string, which the catalog block gives you ready to use; to have a name that outlives the target behind it, define an actual route key.
+A **mode id is not a route key**. `agent-modes` publishes only what its `defaultRoutes` and `modes[].routes` tables name; the ids you cycle with `/mode` are not in that set and resolve to nothing. The two are deliberately separate — a route is a name the route table owns, pointing wherever that table says, while a mode id names a target you cycle onto — so accepting ids here would blur the one distinction that tells a caller what it is passing. To dispatch to a mode's model, pass that mode's `provider/model:thinkingLevel` string, which the catalog block gives you ready to use; to have a name that outlives the target behind it, define an actual route key.
 
 ### Thinking levels are not models
 

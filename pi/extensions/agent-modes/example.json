@@ -7,6 +7,7 @@
       "provider": "anthropic",
       "model": "claude-fable-5",
       "thinkingLevel": "high",
+      "distinct": true,
       "description": "A second-opinion model, deliberately different from the one you are running on"
     }
   },

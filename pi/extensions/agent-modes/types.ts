@@ -20,6 +20,18 @@ export interface RouteTarget {
   model: string;
   thinkingLevel: ThinkingLevel;
   description?: string;
+  /**
+   * Whether this route must differ from the model the session is running on.
+   * Set, a target equal to the live selection resolves to nothing; unset, the
+   * key is a plain alias that always resolves.
+   *
+   * The rule belongs to a *contrast* route like `oracle` — a second opinion
+   * from the model you are already running is not one — and to nothing else.
+   * A persona whose `model:` frontmatter names an alias needs that name to
+   * resolve in every mode; silently dropping it sends a bare word to the child,
+   * which then dies on an unknown model.
+   */
+  distinct?: boolean;
 }
 
 /** A target, or `false` to opt a mode out of an inherited default route. */
