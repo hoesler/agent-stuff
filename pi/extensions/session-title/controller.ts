@@ -40,6 +40,7 @@ export interface TitleController {
    * already been made (successful or not).
    */
   isTitled(): boolean;
+  /** Rejects with the cause when a manual run fails; automatic runs never reject. */
   run(mode: TitleMode): Promise<string | undefined>;
   shutdown(): void;
 }
@@ -128,9 +129,14 @@ export function createController(runtime: ControllerRuntime): TitleController {
         });
         return name ? apply(name, requestSequence) : undefined;
       } catch (cause) {
-        if (!controller.signal.aborted) {
-          runtime.debug(`titling failed: ${cause instanceof Error ? cause.message : String(cause)}`);
-        }
+        // An abort is this extension superseding or shutting down its own
+        // request, not a failure anyone asked about.
+        if (controller.signal.aborted) return undefined;
+        runtime.debug(`titling failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+        // Automatic titling is best-effort and stays quiet. A manual run was
+        // asked for, so its cause is the answer: "could not generate a name"
+        // alone leaves nothing to act on.
+        if (mode === "manual") throw cause;
         return undefined;
       } finally {
         if (active === controller) active = undefined;

@@ -98,8 +98,39 @@ test("a failed manual run does not latch, so automatic titling remains possible"
   const h = harness(async () => {
     throw new Error("provider down");
   });
-  assert.equal(await h.controller.run("manual"), undefined);
+  await assert.rejects(h.controller.run("manual"), /provider down/);
   assert.equal(h.controller.isTitled(), false, "a failed /title must not block later automatic titling");
+});
+
+test("a failed manual run reports its cause to the caller", async () => {
+  const h = harness(async () => {
+    throw new Error("titling model returned empty content");
+  });
+  await assert.rejects(h.controller.run("manual"), {
+    message: "titling model returned empty content",
+  });
+});
+
+test("a failed automatic run stays silent, so best-effort titling never surfaces an error", async () => {
+  const h = harness(async () => {
+    throw new Error("titling model returned empty content");
+  });
+  assert.equal(await h.controller.run("initial"), undefined);
+});
+
+test("an aborted manual run resolves undefined rather than reporting the abort", async () => {
+  let release: (() => void) | undefined;
+  const h = harness(async (request) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    request.signal.throwIfAborted();
+    return "Never applied";
+  });
+  const pending = h.controller.run("manual");
+  h.controller.shutdown();
+  release?.();
+  assert.equal(await pending, undefined, "a superseded manual run is not a failure to report");
 });
 
 test("a superseded request is aborted and its result discarded", async () => {

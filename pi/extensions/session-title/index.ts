@@ -63,23 +63,29 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
     currentName: string | undefined,
     signal: AbortSignal,
   ): Promise<string | undefined> => {
+    /**
+     * Every reason titling cannot run is named and thrown. Automatic titling
+     * swallows the throw, so it warns here instead — once, since it fires
+     * unbidden. A manual run reports the cause at the command, so warning here
+     * too would say it twice.
+     */
+    const fail: (message: string) => never = (message) => {
+      if (mode !== "manual") warnOnce(ctx, message);
+      throw new Error(message);
+    };
+
     const current = config();
-    if (!current) return undefined;
+    if (!current) fail("no titling model configured");
 
     const model = resolveTitlingModel(ctx.modelRegistry, current.model);
-    if (!model) {
-      warnOnce(ctx, `model not found: ${current.model}`);
-      return undefined;
-    }
+    if (!model) fail(`model not found: ${current.model}`);
+
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok) {
-      warnOnce(ctx, `authentication failed for ${current.model}: ${auth.error}`);
-      return undefined;
-    }
+    if (!auth.ok) fail(`authentication failed for ${current.model}: ${auth.error}`);
 
     const branch = ctx.sessionManager.getBranch();
     const parts = mode === "initial" ? initialDialogue(branch) : recentWindow(branch);
-    if (parts.length === 0) return undefined;
+    if (parts.length === 0) fail("no conversation to title yet");
 
     return generateTitle({
       complete: (context, options) =>
@@ -227,11 +233,18 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const name = await controller?.run("manual");
-      ctx.ui.notify(
-        name ? `Session renamed: ${name}` : "session-title: could not generate a name",
-        name ? "info" : "warning",
-      );
+      try {
+        const name = await controller?.run("manual");
+        ctx.ui.notify(
+          name ? `Session renamed: ${name}` : "session-title: could not generate a name",
+          name ? "info" : "warning",
+        );
+      } catch (cause) {
+        ctx.ui.notify(
+          `session-title: ${cause instanceof Error ? cause.message : String(cause)}`,
+          "warning",
+        );
+      }
     },
   });
 }
