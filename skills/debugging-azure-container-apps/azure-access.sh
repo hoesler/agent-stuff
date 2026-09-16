@@ -68,8 +68,12 @@ az_resolve() {
   echo "Sandbox (NONO_CAP_FILE): $AZ_SANDBOX"
 
   AZ_TOKEN=""; AZ_TOKEN_VAR=""
-  for v in $AZ_CRED_VARS; do
-    if [ -n "${!v:-}" ]; then AZ_TOKEN_VAR="$v"; AZ_TOKEN="${!v}"; break; fi
+  # Unquoted command substitution word-splits in both bash and zsh; a bare
+  # "$AZ_CRED_VARS" would stay one word in zsh. Likewise ${!v} is bash-only,
+  # so read the variable through eval. This file gets sourced into either shell.
+  for v in $(echo "$AZ_CRED_VARS"); do
+    eval "AZ_TOKEN=\${$v-}"
+    if [ -n "$AZ_TOKEN" ]; then AZ_TOKEN_VAR="$v"; break; fi
   done
 
   if [ -z "$AZ_TOKEN" ] && [ "$AZ_SANDBOX" = no ]; then
