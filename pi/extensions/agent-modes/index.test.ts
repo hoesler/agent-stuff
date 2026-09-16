@@ -190,7 +190,7 @@ test("doctor uses editor in TUI and console output in print mode", async () => {
 const routedConfig = JSON.stringify({
   version: 1,
   defaultMode: "low",
-  defaultRoutes: { oracle: { provider: "test", model: "high", thinkingLevel: "high", description: "A second opinion" } },
+  defaultRoutes: { oracle: { provider: "test", model: "high", thinkingLevel: "high", description: "A second opinion", distinct: true } },
   modes: baseModes,
 });
 

@@ -13,7 +13,7 @@ const fable = { provider: "anthropic", model: "claude-fable-5", thinkingLevel: "
 const config: ModeConfig = {
   version: 1,
   defaultMode: "medium",
-  defaultRoutes: { oracle: { ...fable } },
+  defaultRoutes: { oracle: { ...fable, distinct: true } },
   modes: [
     { id: "low", label: "Low", provider: "zai", model: "glm-5.2", thinkingLevel: "low", routes: { oracle: false } },
     { id: "medium", label: "Medium", provider: "openai", model: "gpt-5.6-sol", thinkingLevel: "medium" },
@@ -65,11 +65,11 @@ test("mode:error falls back to defaultRoutes", () => {
   ]);
 });
 
-test("suppresses a route whose target equals the live triple", () => {
+test("suppresses a distinct route whose target equals the live triple", () => {
   assert.deepEqual(resolveRoutes(config, { kind: "custom" }, live("anthropic", "claude-fable-5", "high")), []);
 });
 
-test("does not suppress when only the thinking level differs", () => {
+test("does not suppress a distinct route when only the thinking level differs", () => {
   const routes = resolveRoutes(config, { kind: "custom" }, live("anthropic", "claude-fable-5", "low"));
   assert.equal(routes.length, 1);
 });
@@ -91,7 +91,7 @@ test("describes a mode's opt-out as off", () => {
   ]);
 });
 
-test("describes a target equal to the live triple as redundant, naming the model", () => {
+test("describes a distinct target equal to the live triple as redundant, naming the model", () => {
   assert.deepEqual(describeRoutes(config, { kind: "custom" }, live("anthropic", "claude-fable-5", "high")), [
     { key: "oracle", state: "redundant", model: "anthropic/claude-fable-5:high" },
   ]);
@@ -125,4 +125,24 @@ test("sorts keys so the catalog is stable across turns", () => {
     resolveRoutes(many, named("medium"), live("openai", "gpt-5.6-sol", "medium")).map((r) => r.key),
     ["alpha", "zebra"],
   );
+});
+
+/** An alias route: a stable name for a model, with no contrast rule attached. */
+const alias: ModeConfig = {
+  version: 1,
+  defaultMode: "medium",
+  defaultRoutes: { reviewer: { ...fable } },
+  modes: [config.modes[1]!],
+};
+
+test("keeps a route without distinct whose target equals the live triple", () => {
+  assert.deepEqual(resolveRoutes(alias, named("medium"), live("anthropic", "claude-fable-5", "high")), [
+    { key: "reviewer", model: "anthropic/claude-fable-5:high" },
+  ]);
+});
+
+test("describes a route without distinct as active even when it equals the live triple", () => {
+  assert.deepEqual(describeRoutes(alias, named("medium"), live("anthropic", "claude-fable-5", "high")), [
+    { key: "reviewer", state: "active", model: "anthropic/claude-fable-5:high" },
+  ]);
 });

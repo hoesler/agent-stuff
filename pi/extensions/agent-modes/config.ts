@@ -15,7 +15,7 @@ const RESERVED_IDS = new Set(["next", "previous", "doctor", "help", "init"]);
 const SHORTCUT = /^(?:(?:ctrl|shift|alt)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-2])|escape|enter|tab|space|backspace|delete|home|end|pageUp|pageDown|up|down|left|right)$/i;
 const ROOT_KEYS = new Set(["version", "defaultMode", "cycleShortcut", "exposeCatalogInSystemPrompt", "defaultRoutes", "modes"]);
 const MODE_KEYS = new Set(["id", "label", "provider", "model", "thinkingLevel", "description", "routes"]);
-const ROUTE_KEYS = new Set(["provider", "model", "thinkingLevel", "description"]);
+const ROUTE_KEYS = new Set(["provider", "model", "thinkingLevel", "description", "distinct"]);
 
 export interface ConfigPathOptions {
   envPath: string | undefined;
@@ -72,6 +72,9 @@ function parseRouteTarget(value: unknown, path: string): RouteTarget {
   };
   if (input.description !== undefined) {
     target.description = requiredString(input.description, `${path}.description`);
+  }
+  if (input.distinct !== undefined) {
+    target.distinct = requiredBoolean(input.distinct, `${path}.distinct`);
   }
   return target;
 }

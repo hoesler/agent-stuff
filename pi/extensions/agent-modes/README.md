@@ -152,9 +152,14 @@ added and no error text appears in the prompt.
 
 ## Routes
 
-A route is a named key that resolves to a model, per mode. It answers "when I am
-in this mode, which model is my *second opinion*?" — a question a mode catalog
-cannot answer, because the target is not the mode you are running.
+A route is a named key that resolves to a model. It answers a question a mode
+catalog cannot, because the target is not the mode you are running: "which model
+do I dispatch *this* kind of work to?"
+
+Most routes are plain aliases — a stable name for a model, the same in every
+mode, so a persona's `model:` frontmatter can name it and you move the target by
+editing one line here. A route that must *differ* from the model you are running
+sets `distinct` (see below); `oracle` is the one that does.
 
 Both fields are optional. With neither present, behavior is exactly as before:
 nothing is published and nothing is rendered.
@@ -168,7 +173,14 @@ nothing is published and nothing is rendered.
       "provider": "anthropic",
       "model": "claude-fable-5",
       "thinkingLevel": "high",
+      "distinct": true,
       "description": "A second-opinion model, deliberately different from the one you are running on"
+    },
+    "reviewer": {
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "thinkingLevel": "high",
+      "description": "Reviews a diff for correctness"
     }
   },
   "modes": [
@@ -185,6 +197,7 @@ nothing is published and nothing is rendered.
 - A target is the same shape as a mode target: `provider`, `model`, optional
   `thinkingLevel` (default `off`, rendered without a `:off` suffix), and an
   optional `description` used only by the catalog block below.
+- `distinct` — optional, default `false`. See below.
 - Route keys must be non-empty and must not contain `/`. That is what lets a
   consumer tell a key from a `provider/model` reference.
 
@@ -199,9 +212,20 @@ Resolution for a key, against the active mode:
 is the point of `defaultRoutes`: a session pinned with `--model` still has a
 second opinion.
 
-A target that equals the live provider/model/thinkingLevel triple exactly
-resolves to nothing. A second opinion from the model you are already running is
-not a second opinion.
+### `distinct`
+
+A target marked `"distinct": true` resolves to nothing while it equals the live
+provider/model/thinkingLevel triple exactly. A second opinion from the model you
+are already running is not a second opinion, and the `oracle` tool deactivates
+rather than offer one.
+
+The rule is opt-in because it is wrong for every other kind of route. A persona
+carrying `model: reviewer` needs that name to resolve in every mode: suppressed,
+the bare word reaches the child, which then dies on an unknown model. Silent
+disappearance is a worse failure than a redundant dispatch.
+
+`/mode doctor` reports a suppressed route as `unavailable (… is the model already
+running)`, so the distinction is visible when you are wondering where a key went.
 
 Routes are recomputed whenever the active mode can have changed — mode
 activation, session start, model or thinking-level selection, and config reload —

@@ -73,6 +73,7 @@ export function describeRoutes(
       continue;
     }
     const redundant =
+      entry.distinct === true &&
       entry.provider === effective.provider &&
       entry.model === effective.model &&
       entry.thinkingLevel === effective.thinkingLevel;
