@@ -43,7 +43,7 @@ they change — no restart needed.
 | --- | --- |
 | `/title` | generate a name from the current conversation; overrides a manual name |
 | `/title status` | model, whether it resolves, enabled state, current name and its source |
-| `/title doctor` | config paths, parse errors, model resolution and authentication |
+| `/title doctor` | config paths, parse errors, model resolution, authentication and the resolved endpoint |
 | `/title on` / `/title off` | toggle automatic titling for this session only |
 
 ## Behavior

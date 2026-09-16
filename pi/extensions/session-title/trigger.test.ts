@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveTitlingModel, shouldTitleOnSettle } from "./trigger.ts";
+import { resolveTitlingModel, shouldTitleOnSettle, withResolvedEndpoint } from "./trigger.ts";
 
 const base = { hasUI: true, configured: true, enabled: true, titled: false };
 
@@ -50,4 +50,23 @@ test("resolveTitlingModel returns undefined for a malformed string", () => {
   assert.equal(resolveTitlingModel(registry, "nope"), undefined);
   assert.equal(resolveTitlingModel(registry, "/y"), undefined);
   assert.equal(resolveTitlingModel(registry, "x/"), undefined);
+});
+
+test("the endpoint from the credential replaces the one in the catalog", () => {
+  const model = { id: "gpt-5.6-luna", baseUrl: "https://api.individual.githubcopilot.com" };
+  assert.deepEqual(withResolvedEndpoint(model, "https://api.business.githubcopilot.com"), {
+    id: "gpt-5.6-luna",
+    baseUrl: "https://api.business.githubcopilot.com",
+  });
+});
+
+test("a credential naming no endpoint leaves the catalog entry alone", () => {
+  const model = { id: "gpt-5-mini", baseUrl: "https://api.individual.githubcopilot.com" };
+  assert.equal(withResolvedEndpoint(model, undefined), model, "no rewrite means the same object");
+});
+
+test("resolving an endpoint does not mutate the registry's model", () => {
+  const model = { id: "gpt-5.6-luna", baseUrl: "https://api.individual.githubcopilot.com" };
+  withResolvedEndpoint(model, "https://copilot-api.company.ghe.com");
+  assert.equal(model.baseUrl, "https://api.individual.githubcopilot.com");
 });

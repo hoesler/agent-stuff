@@ -13,7 +13,7 @@ import { createController, type TitleController } from "./controller.ts";
 import { alreadyTitled, latestMarker, STATE_ENTRY_TYPE } from "./state.ts";
 import { generateTitle } from "./title.ts";
 import { initialDialogue, recentWindow } from "./transcript.ts";
-import { resolveTitlingModel, shouldTitleOnSettle } from "./trigger.ts";
+import { resolveTitlingModel, shouldTitleOnSettle, withResolvedEndpoint } from "./trigger.ts";
 import type { ConfigSnapshot, SessionTitleConfig, TitleMarker } from "./types.ts";
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
@@ -87,9 +87,12 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
     const parts = mode === "initial" ? initialDialogue(branch) : recentWindow(branch);
     if (parts.length === 0) fail("no conversation to title yet");
 
+    // The credential, not the catalog, names the endpoint for this model.
+    const endpoint = withResolvedEndpoint(model, auth.baseUrl);
+
     return generateTitle({
       complete: (context, options) =>
-        completeSimple(model, context, {
+        completeSimple(endpoint, context, {
           ...options,
           apiKey: auth.apiKey,
           headers: auth.headers,
@@ -204,6 +207,9 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
           if (model) {
             const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
             lines.push(`Authentication: ${auth.ok ? "ok" : `failed — ${auth.error}`}`);
+            // The endpoint is worth printing even though it is rarely wrong:
+            // when it is, every other line here still reads "ok".
+            if (auth.ok) lines.push(`Endpoint: ${withResolvedEndpoint(model, auth.baseUrl).baseUrl}`);
           }
         } else {
           lines.push(
