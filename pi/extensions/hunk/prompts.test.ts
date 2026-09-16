@@ -6,6 +6,7 @@ import type { HunkNote } from "./types.ts";
 function note(overrides: Partial<HunkNote> & { noteId: string }): HunkNote {
   return {
     source: "user",
+    parentId: undefined,
     filePath: "src/a.ts",
     line: 42,
     side: "new",
@@ -22,6 +23,10 @@ test("the work list anchors each note to a file, side, and line", () => {
   assert.match(rendered, /line 42 \(new side\)/);
   assert.match(rendered, /this leaks a handle/);
   assert.doesNotMatch(rendered, /--new-line|--old-line/);
+});
+
+test("the work list carries the id the agent has to reply to", () => {
+  assert.match(renderWorkList([note({ noteId: "user:1789-3" })]), /note id `user:1789-3`/);
 });
 
 test("an old-side note names the old side", () => {
@@ -57,6 +62,14 @@ test("the fix prompt carries the notes and the author to reply as", () => {
   assert.match(prompt, /this leaks a handle/);
   assert.match(prompt, /--author pi/);
   assert.match(prompt, /abc/);
+});
+
+test("the fix prompt sends the answer to the note, not to its line", () => {
+  const prompt = fixPrompt({ sessionId: "abc", notes: [note({ noteId: "user:1789-3" })], author: "pi" });
+  assert.match(prompt, /comment add --reply-to/);
+  assert.match(prompt, /replyTo/);
+  // The consequence of skipping it is the part the agent has to read.
+  assert.match(prompt, /offered again/);
 });
 
 test("the fix prompt forbids removing the user's notes", () => {

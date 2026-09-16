@@ -66,6 +66,12 @@ export interface HunkSession {
 /** One note, as `hunk session comment list --json` reports it. */
 export interface HunkNote {
   noteId: string;
+  /**
+   * The note this one replies to, as `comment add --reply-to` recorded it.
+   * Absent on a note that starts its own thread. This is the extension's whole
+   * answer signal, so it must survive parsing even when nothing else does.
+   */
+  parentId: string | undefined;
   /** `user` for notes typed in the TUI, `agent` for notes added over the CLI. */
   source: string;
   filePath: string;

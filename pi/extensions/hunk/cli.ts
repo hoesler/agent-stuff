@@ -100,6 +100,7 @@ export function parseNotes(stdout: string): HunkNote[] {
     const oldLine = firstLine(fields.oldRange);
     result.push({
       noteId,
+      parentId: optionalString(fields.parentId),
       source: optionalString(fields.source) ?? "unknown",
       filePath,
       line: newLine ?? oldLine,

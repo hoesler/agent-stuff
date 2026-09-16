@@ -88,6 +88,19 @@ test("parseNotes takes the first line of whichever range a note carries", () => 
   );
 });
 
+test("parseNotes keeps the parent a reply names, and leaves a root note without one", () => {
+  const json = JSON.stringify({
+    comments: [
+      { noteId: "user:1", source: "user", filePath: "a.txt", newRange: [2, 2], body: "fix this" },
+      { noteId: "mcp:1", parentId: "user:1", source: "agent", filePath: "a.txt", newRange: [2, 2], body: "done" },
+    ],
+  });
+  assert.deepEqual(
+    parseNotes(json).map((note) => note.parentId),
+    [undefined, "user:1"],
+  );
+});
+
 test("parseNotes skips an entry with no noteId", () => {
   assert.deepEqual(parseNotes('{"comments": [{"filePath": "a.txt"}]}'), []);
 });

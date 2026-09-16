@@ -11,14 +11,7 @@ import { parseCommand } from "./args.ts";
 import { createCli, type Exec, type HunkCli } from "./cli.ts";
 import { defaultConfig, loadConfig } from "./config.ts";
 import { menuChoice, menuFooter, menuNote, menuRows, type MenuAction } from "./menu.ts";
-import {
-  ADDRESSED_ENTRY,
-  confirmAddressed,
-  nextAddressed,
-  pendingNotes,
-  restoreAddressed,
-  type AddressedState,
-} from "./pending.ts";
+import { pendingNotes } from "./pending.ts";
 import { fixPrompt, reviewPrompt } from "./prompts.ts";
 import { repoFacts, type RepoFacts } from "./repo.ts";
 import { ensureSession, type Resolution } from "./session.ts";
@@ -60,8 +53,6 @@ type Probe =
 
 export default function hunkExtension(pi: ExtensionAPI) {
   let config: HunkConfig = defaultConfig();
-  /** Set when a fix turn is in flight, so `agent_settled` knows what to confirm. */
-  let outstandingFix: { sessionId: string; notes: HunkNote[]; since: string } | undefined;
 
   const exec: Exec = (command, args, options) => pi.exec(command, args, options);
 
@@ -206,21 +197,24 @@ export default function hunkExtension(pi: ExtensionAPI) {
   /**
    * Reading the live window never spawns one: `ensureSession` without a target
    * reports an absent window rather than opening an empty one.
+   *
+   * Every note is read, not just the user's: which of them are answered is a
+   * fact about the replies standing next to them, and the window is the only
+   * place that fact lives.
    */
   async function probeNotes(ctx: ExtensionCommandContext, sessionId: string | undefined): Promise<Probe> {
     const resolution = await resolve(ctx, undefined, sessionId);
     if (resolution.kind !== "session") return { kind: "unavailable", message: unresolvedMessage(resolution) };
 
-    const notes = await cliFor(ctx.cwd).listNotes(resolution.sessionId, "user");
+    const notes = await cliFor(ctx.cwd).listNotes(resolution.sessionId, "all");
     if (!notes.ok) return { kind: "unavailable", message: notes.message };
 
-    const pending = pendingNotes(notes.value, restoreAddressed(ctx.sessionManager.getBranch()));
+    const pending = pendingNotes(notes.value);
     if (pending.length === 0) return { kind: "empty", sessionId: resolution.sessionId };
     return { kind: "notes", sessionId: resolution.sessionId, notes: pending };
   }
 
   function dispatchFix(ctx: ExtensionCommandContext, sessionId: string, notes: HunkNote[]) {
-    outstandingFix = { sessionId, notes, since: new Date().toISOString() };
     ctx.ui.notify(`Addressing ${notes.length} note${notes.length === 1 ? "" : "s"} from Hunk.`, "info");
     pi.sendUserMessage(fixPrompt({ sessionId, notes, author: config.noteAuthor }));
   }
@@ -320,34 +314,6 @@ export default function hunkExtension(pi: ExtensionAPI) {
     });
     config = snapshot.config;
     for (const error of snapshot.errors) ctx.ui.notify(`hunk config: ${error.message}`, "warning");
-  });
-
-  /**
-   * Notes are marked addressed only after the turn, and only where a reply of
-   * ours landed on the same anchor. Marking at dispatch would bury a note the
-   * agent silently failed to answer.
-   */
-  pi.on("agent_settled", async (_event, ctx) => {
-    const fix = outstandingFix;
-    if (!fix) return;
-    outstandingFix = undefined;
-
-    const all = await cliFor(ctx.cwd).listNotes(fix.sessionId, "all");
-    if (!all.ok) return ctx.ui.notify(all.message, "warning");
-
-    const confirmed = confirmAddressed(fix.notes, all.value, { author: config.noteAuthor, since: fix.since });
-    if (confirmed.length > 0) {
-      pi.appendEntry<AddressedState>(ADDRESSED_ENTRY, {
-        noteIds: nextAddressed(restoreAddressed(ctx.sessionManager.getBranch()), confirmed),
-      });
-    }
-    const unanswered = fix.notes.length - confirmed.length;
-    if (unanswered > 0) {
-      ctx.ui.notify(
-        `${unanswered} note${unanswered === 1 ? "" : "s"} got no reply in Hunk and stay pending.`,
-        "warning",
-      );
-    }
   });
 
   pi.registerCommand("hunk", {

@@ -11,9 +11,14 @@ function anchor(note: HunkNote): string {
   return `${note.filePath} line ${note.line} (${note.side} side)`;
 }
 
+/**
+ * The anchor tells the agent what the note is about; the id is what it answers
+ * with. Both are needed: `--reply-to` inherits the anchor, so the id alone
+ * would leave the agent reading the work list without knowing where to look.
+ */
 export function renderWorkList(notes: HunkNote[]): string {
   return notes
-    .map((note, index) => `${index + 1}. ${anchor(note)}\n   ${note.body.split("\n").join("\n   ")}`)
+    .map((note, index) => `${index + 1}. ${anchor(note)} · note id \`${note.noteId}\`\n   ${note.body.split("\n").join("\n   ")}`)
     .join("\n\n");
 }
 
@@ -47,8 +52,10 @@ export function fixPrompt(options: { sessionId: string; notes: HunkNote[]; autho
     "",
     renderWorkList(options.notes),
     "",
-    "For each one: make the change, then reply on the same file, side, and line with `comment add`, using",
-    `\`--author ${options.author}\`, saying what you changed. The reply is how the user sees which notes you handled without rereading the diff.`,
+    "For each one: make the change, then answer the note itself with `comment add --reply-to <note id>`, using",
+    `\`--author ${options.author}\`, saying what you changed. Batch several answers with \`comment apply\`, each item carrying its own \`replyTo\`.`,
+    "",
+    "Reply to the note by its id, not to its line. A note with a reply of yours under it is handled; a note without one is offered again the next time the user asks, however much you changed in the code.",
     "",
     "Never remove or clear the user's notes — no `comment rm`, no `comment clear`. They decide when a note is done.",
     "",
