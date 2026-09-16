@@ -1,90 +1,27 @@
 import type { HunkNote } from "./types.ts";
 
-export const ADDRESSED_ENTRY = "hunk-addressed";
-
-export interface AddressedState {
-  noteIds: string[];
-}
-
-/** The slice of a session entry this module reads. No pi types. */
-export interface BranchEntry {
-  type: string;
-  customType?: string;
-  data?: unknown;
-}
-
-/**
- * Appended as custom session entries rather than written to a config file, so
- * forking or walking the session tree carries the answers given on that branch.
- * The last valid entry wins; a malformed later entry must never discard a good
- * earlier one, as `tool-catalog/state.ts` also guarantees.
- */
-export function restoreAddressed(entries: BranchEntry[]): Set<string> {
-  let latest: string[] | undefined;
-  for (const entry of entries) {
-    if (entry.type !== "custom" || entry.customType !== ADDRESSED_ENTRY) continue;
-    const data = entry.data as AddressedState | undefined;
-    if (!data || !Array.isArray(data.noteIds)) continue;
-    latest = data.noteIds.filter((id): id is string => typeof id === "string");
-  }
-  return new Set(latest ?? []);
-}
-
 /**
  * Because the extension never removes a user note, "pending" cannot mean "any
  * user note" — every later bare `/hunk` would dispatch to fix mode forever.
+ * Pending means *a user note with no reply of ours hanging off it*.
+ *
+ * Hunk states that relationship exactly: `comment add --reply-to <note-id>`
+ * records the parent, and `comment list` reports it back as `parentId`. Nothing
+ * here is inferred, because every inference this replaces failed in a way that
+ * buried a note for good — an answer on the same line but a different anchor, a
+ * reply that arrived a turn after the extension stopped looking, a reply whose
+ * `--author` the agent left off, or two questions on one line answered once.
+ *
+ * Read from the live window on every probe rather than remembered in the
+ * session, so an answer counts whenever it lands: in the fix turn, in a later
+ * turn, or after pi has been restarted around a window left open.
  */
-export function pendingNotes(notes: HunkNote[], addressed: ReadonlySet<string>): HunkNote[] {
-  return notes.filter((note) => note.source === "user" && !addressed.has(note.noteId));
-}
-
-/** Identifies the place a note hangs on. ` ` cannot occur in a path. */
-function anchorKey(note: HunkNote): string {
-  return `${note.filePath} ${note.side} ${note.line ?? "?"}`;
-}
-
-/**
- * Which notes the agent actually answered. The extension cannot know this at
- * dispatch time — the turn has not run yet — so it correlates afterwards: a
- * user note is addressed when a reply of ours sits on the same anchor and was
- * created after the dispatch. Marking notes addressed optimistically would
- * bury a note the agent silently failed to answer.
- */
-export function confirmAddressed(
-  userNotes: HunkNote[],
-  allNotes: HunkNote[],
-  options: { author: string; since: string },
-): string[] {
-  const replies = allNotes.filter(
-    (note) =>
-      note.source !== "user" &&
-      note.author === options.author &&
-      note.createdAt !== undefined &&
-      note.createdAt > options.since,
-  );
-
-  // Hunk allows several notes on one line, and a reply carries no reference to
-  // the note it answers. So notes are confirmed per anchor, and only when the
-  // replies there are at least as many as the notes: two questions answered
-  // once leaves both pending. Erring this way costs a re-offer; erring the
-  // other way buries a note the agent never answered, permanently, because the
-  // addressed set only ever grows.
-  const groups = new Map<string, HunkNote[]>();
-  for (const note of userNotes) {
-    const key = anchorKey(note);
-    const group = groups.get(key);
-    if (group) group.push(note);
-    else groups.set(key, [note]);
+export function pendingNotes(notes: HunkNote[]): HunkNote[] {
+  const answered = new Set<string>();
+  for (const note of notes) {
+    // A reply the user wrote to their own note does not answer it.
+    if (note.source === "user" || note.parentId === undefined) continue;
+    answered.add(note.parentId);
   }
-
-  const confirmed: string[] = [];
-  for (const [key, group] of groups) {
-    const answered = replies.filter((reply) => anchorKey(reply) === key).length;
-    if (answered >= group.length) confirmed.push(...group.map((note) => note.noteId));
-  }
-  return confirmed;
-}
-
-export function nextAddressed(addressed: ReadonlySet<string>, confirmed: string[]): string[] {
-  return [...new Set([...addressed, ...confirmed])].sort();
+  return notes.filter((note) => note.source === "user" && !answered.has(note.noteId));
 }

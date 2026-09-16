@@ -19,9 +19,9 @@
 
 The extension runs Hunk in your own terminal. When you run `/hunk review`, it reuses a live Hunk window if one is open for this repository and reloads it with the target, or opens one beside you (one terminal per repository): a [herdr](https://herdr.dev) pane when pi is running inside herdr, otherwise a Ghostty right-split on macOS. If you open a window yourself with `hunk diff`, running `/hunk` finds it automatically.
 
-You review the changeset, leaving notes on code that needs attention. Notes are never removed by the extension — only marked as handled when the agent replies on the same file, side, and line with `comment add`, using `--author <noteAuthor>` to sign the reply.
+You review the changeset, leaving notes on code that needs attention. Notes are never removed by the extension — a note is handled once a reply of the agent's hangs off it, which the agent does with `comment add --reply-to <note id>` (or a `replyTo` item in a `comment apply` batch), signed with `--author <noteAuthor>`.
 
-The addressed set lives in the session only. Closing and relaunching Hunk makes every note read as new again, so you can re-review one diff multiple times.
+Nothing about that is remembered: which notes are answered is read from the live window every time you run `/hunk`. So an answer counts whenever it lands — in the fix turn, in a turn three messages later, or after pi has been restarted around a window you left open — and a note the agent quietly skipped is offered again instead of being buried. Closing and relaunching Hunk drops the replies with the notes, so one diff can be reviewed from scratch again.
 
 ## The menu
 
@@ -94,14 +94,14 @@ herdr sets `HERDR_ENV=1` in every pane it manages, and that is how the extension
 
 ## What it leaves alone
 
-- **User notes**: The extension never removes notes, even when fixing them. Only replies mark them addressed.
+- **User notes**: The extension never removes notes, even when fixing them. Only a reply hanging off a note marks it handled.
 - **Other sessions**: Each Hunk session is independent. The extension only looks for sessions in the current repository.
-- **Manual notes**: Notes left with the TUI are never touched; only agent-written replies are matched to confirm handling.
+- **Manual notes**: Notes left with the TUI are never touched. A reply you write yourself does not mark your own note handled — only the agent's does.
 - **The Hunk window**: After spawning, the extension hands the terminal to you. You type commands, edit files, and open the diff just as you would without the agent.
 
 ## Requirements
 
-- **Hunk 0.18.2** or later.
+- **Hunk 0.22.0** or later, for `comment add --reply-to`. On an older Hunk the agent's replies carry no parent, so every note keeps being offered.
 - To open a window: either **herdr** with pi running inside one of its panes, or **Ghostty** on **macOS**. With neither, `/hunk` prints the command for you to run by hand.
 
 ## Attribution
