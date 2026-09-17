@@ -26,7 +26,7 @@ Two things drive most wrong conclusions:
    ado_gate                         # active PR for this branch; sets ADO_PR_ID
    ```
 
-   `ado_resolve` probes `/_apis/connectionData` and checks **who** came back — a 200 carrying an anonymous identity is a failure, not a success. **Until `ado_gate` prints a PR id, you do not have PR access.** If any step fails, its error maps to exactly one corrective action in the decision table in [access.md](access.md). Take that action; do not try other credentials, base URLs, headers, or api-versions.
+   `ado_resolve` probes `/_apis/connectionData` and checks **who** came back — a 200 carrying an anonymous identity is a failure, not a success. **Until `ado_gate` prints a PR id, you do not have PR access.** If any step fails, its error maps to exactly one corrective action in the decision table in [access.md](access.md). Take that action; do not try other credentials, headers, or api-versions. The one thing worth checking first is the base URL `ado_resolve` printed: if it is not a `dev.azure.com` host, something else answered and its error is not Azure DevOps' — see [access.md](access.md#the-base-url-is-part-of-the-diagnosis).
 
 1. **Read the review** — `ado_threads`, then filter: `isDeleted != true` AND `status == "active"`.
 2. **For each active thread** — read `comments[0].content`; if `threadContext` is present, open `filePath` at `rightFileStart.line`.

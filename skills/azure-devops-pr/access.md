@@ -12,7 +12,7 @@ Azure DevOps access is not "find a token." It is a **tuple**, and every element 
 |---|---|
 | credential variable | `AZURE_DEVOPS_EXT_PAT` |
 | auth scheme | Basic (PAT) **or** Bearer (Entra token) — never guessed |
-| base URL | `$AZURE_DEVOPS_BASE_URL`, else `https://dev.azure.com` |
+| base URL | `$AZURE_DEVOPS_BASE_URL`, else `https://dev.azure.com` — check what it holds; it may point at a proxy |
 | routing identifiers | org, project, repo, branch — parsed from the git remote |
 
 A partial tuple produces a **partial success that reads like a real one**: the request returns HTTP 200 and a body, but the body is a sign-in page or an anonymous identity. Resolve the whole tuple with the helper below, in one pass, before touching the PR.
@@ -43,7 +43,7 @@ A project name with a space stays percent-encoded (`My%20Project`) — that is c
 ado_resolve
 ```
 
-`ado_resolve` picks the credential from an allowlist, **infers the auth scheme from the credential's shape**, sets the base URL, and probes `/_apis/connectionData`.
+`ado_resolve` picks the credential from an allowlist, **infers the auth scheme from the credential's shape**, sets the base URL, and probes `/_apis/connectionData` at `api-version=7.0-preview` — that route is preview-only and rejects a bare `7.0`, while the git and PR routes below are served at `7.0`.
 
 **Supported Azure DevOps credential variables — the complete list:**
 
@@ -148,16 +148,38 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 |---|---|---|
 | HTML sign-in page / HTTP 203 (`SignInPage`) | No usable credential reached the API, or a PAT was sent as Bearer | Return to `ado_resolve`. Do not change the URL, api-version, or headers |
 | `Anonymous` identity on HTTP 200 | Request accepted as nobody | Same as above — the credential, not the request |
-| `401 Unauthorized` | PAT expired or revoked | Ask the user for a fresh credential. Stop |
+| `401 Unauthorized` **from a `dev.azure.com` base** | PAT expired or revoked | Ask the user for a fresh credential. Stop |
+| `401` whose body is not an Azure DevOps error (no `typeKey`/`typeName`, e.g. `{"error":"Unauthorized"}`) | An intermediary answered — the request never reached Azure DevOps | Check the base URL `ado_resolve` printed. Re-run with `AZURE_DEVOPS_BASE_URL=https://dev.azure.com`. Do not touch the credential |
 | `403` with `VS403403` / "does not have permission" | Credential is valid, PAT scope too narrow | Report the needed scope: `vso.code` to read, `vso.code_write` to reply or change thread status. Stop |
 | `TF400813` / `TF401019` | Principal has no access to this project or repo | Report the missing access and scope. Stop |
 | `GitRepositoryNotFoundException` on a path that looks right | Repo name wrong, or the project segment is missing from the base URL | Re-run `ado_discover`; the base must be `.../{org}/{project}/_apis/...`, never org-only |
 | `400` naming the API version | `api-version` missing or unsupported on that route | Use `api-version=7.0`; let `ado_api` add it |
+| `VssInvalidPreviewVersionException` ("the requested version … is under preview") | That route is preview-only; the version sent lacked `-preview` | Append `-preview` to that route's `api-version`. **Access works** — this is the request, not the credential |
 | Proxy `Forbidden` / no HTTP response at all | Route or endpoint rule does not permit this host or path | Read the profile's `endpoint_rules` (Step 2) and report the required route |
 | `value: []` on the PR search | **Access works.** No active PR for that branch | Check the branch, the `refs/heads/` prefix, and `status=active`. Do not touch credentials |
 | Thread list returns rows but none actionable | **Access works.** Filtering problem | Drop `isDeleted: true` threads and check `status`. Do not touch credentials |
 
 The dividing line: the last two rows mean you are already inside the API and the problem is the query. Everything above them means the call never authenticated.
+
+## The base URL is part of the diagnosis
+
+`ado_resolve` takes the base from `$AZURE_DEVOPS_BASE_URL` and falls back to `https://dev.azure.com`. In a sandbox that variable often points at a **local proxy** (`http://127.0.0.1:<port>/azure_devops`), and the port is regenerated per call — a base that changes between runs is the tell.
+
+A proxy answers with its own errors. `{"error":"Unauthorized"}` and HTTP 401 is the proxy refusing the request; the PAT was never presented to Azure DevOps. Reading it as a dead credential sends you to "ask for a fresh credential, stop" while nothing is wrong with the credential at all.
+
+Two things separate the two cases:
+
+- **The shape of the body.** Every Azure DevOps error carries `typeKey` or `typeName`. A bare `{"error": …}` did not come from Azure DevOps. `ado__report` says so in its hint and names the base it called.
+- **The host.** `ado_resolve` prints `Base:` on every run and warns when it is not a `dev.azure.com` or `*.visualstudio.com` host.
+
+When the base is not an Azure DevOps host, re-run the probe against the real one before drawing any conclusion about access:
+
+```bash
+AZURE_DEVOPS_BASE_URL=https://dev.azure.com
+ado_resolve
+```
+
+This is the only base-URL change worth making. Everything else in the decision table still holds: do not go hunting through hosts, headers, or api-versions.
 
 ## Org-level vs project-level base URL
 

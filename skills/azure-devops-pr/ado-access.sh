@@ -122,11 +122,23 @@ ado_resolve() {
 
   ADO_BASE="${AZURE_DEVOPS_BASE_URL:-https://dev.azure.com}"
   ADO_BASE="${ADO_BASE%/}"
+  export ADO_BASE            # ado__report names it when an intermediary answers
   echo "Base:        $ADO_BASE"
+  case "$ADO_BASE" in
+    https://dev.azure.com|https://dev.azure.com/*|https://*.visualstudio.com|https://*.visualstudio.com/*) ;;
+    *)
+      echo "  WARNING: not an Azure DevOps host — this came from \$AZURE_DEVOPS_BASE_URL."
+      echo "  Whatever sits there answers with its own errors. A 401 from it says nothing about the PAT."
+      echo "  Before concluding anything about the credential, re-run with:"
+      echo "    AZURE_DEVOPS_BASE_URL=https://dev.azure.com"
+      ;;
+  esac
 
   # Identity probe. connectionData is org-scoped, cheap, and — crucially —
   # answers 200 for anonymous callers too, so the check is WHO came back.
-  ado__curl GET "$ADO_BASE/$ADO_ORG/_apis/connectionData?api-version=7.0" \
+  # It is a preview-only route: orgs reject a bare "7.0" with
+  # VssInvalidPreviewVersionException. The git/PR routes below are fine on 7.0.
+  ado__curl GET "$ADO_BASE/$ADO_ORG/_apis/connectionData?api-version=7.0-preview" \
     | ado__report "Identity probe" --identity || return 1
   ADO_RESOLVED=1
 }
@@ -149,7 +161,7 @@ ado__curl() {
 }
 
 ado__REPORT_PY='
-import json, sys
+import json, os, sys
 label = sys.argv[1]
 identity = "--identity" in sys.argv[2:]
 raw = sys.stdin.read().rsplit("\n", 1)
@@ -178,8 +190,18 @@ except Exception:
     fail("NonJson", body[:2000] or "<empty body>")
 
 if isinstance(d, dict) and (d.get("typeKey") or d.get("typeName") or not status.startswith("2")):
-    fail(d.get("typeKey") or d.get("errorCode") or status,
-         d.get("message") or json.dumps(d)[:2000])
+    key = d.get("typeKey") or d.get("errorCode") or status
+    hint = None
+    if not (d.get("typeKey") or d.get("typeName")):
+        # Azure DevOps errors always carry typeKey/typeName. A bare {"error": ...}
+        # came from something in front of the API, not from the API.
+        hint = ("not an Azure DevOps error payload - an intermediary answered at %s. "
+                "Fix the base URL before touching the credential"
+                % (os.environ.get("ADO_BASE") or "the configured base URL"))
+    elif "PreviewVersion" in str(key):
+        hint = ("that route is preview-only - append -preview to its api-version. "
+                "Access is fine; this is the probe, not the credential")
+    fail(key, d.get("message") or json.dumps(d)[:2000], hint)
 
 if identity:
     u = (d.get("authenticatedUser") or {})
