@@ -21,6 +21,8 @@ The extension runs Hunk in your own terminal. When you run `/hunk review`, it re
 
 You review the changeset, leaving notes on code that needs attention. Notes are never removed by the extension — a note is handled once a reply of the agent's hangs off it, which the agent does with `comment add --reply-to <note id>` (or a `replyTo` item in a `comment apply` batch), signed with `--author <noteAuthor>`.
 
+A note you write under one of the agent's review notes counts as work the same way, and the fix prompt carries the thread it hangs off — quoted above your own note, oldest first. Your reply is usually the half that does not stand alone ("no, keep it", "the second one"), and the note it answers may have been written in a session that is no longer open.
+
 Nothing about that is remembered: which notes are answered is read from the live window every time you run `/hunk`. So an answer counts whenever it lands — in the fix turn, in a turn three messages later, or after pi has been restarted around a window you left open — and a note the agent quietly skipped is offered again instead of being buried. Closing and relaunching Hunk drops the replies with the notes, so one diff can be reviewed from scratch again.
 
 ## The menu

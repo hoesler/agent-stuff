@@ -47,7 +47,9 @@ const CONFIRM = "confirm";
  * severities.
  */
 type Probe =
-  | { kind: "notes"; sessionId: string; notes: HunkNote[] }
+  // `all` rides along with `notes` because the thread above a pending note is
+  // made of notes that are not pending themselves, and the window is read once.
+  | { kind: "notes"; sessionId: string; notes: HunkNote[]; all: HunkNote[] }
   | { kind: "empty"; sessionId: string }
   | { kind: "unavailable"; message: string };
 
@@ -211,12 +213,12 @@ export default function hunkExtension(pi: ExtensionAPI) {
 
     const pending = pendingNotes(notes.value);
     if (pending.length === 0) return { kind: "empty", sessionId: resolution.sessionId };
-    return { kind: "notes", sessionId: resolution.sessionId, notes: pending };
+    return { kind: "notes", sessionId: resolution.sessionId, notes: pending, all: notes.value };
   }
 
-  function dispatchFix(ctx: ExtensionCommandContext, sessionId: string, notes: HunkNote[]) {
+  function dispatchFix(ctx: ExtensionCommandContext, sessionId: string, notes: HunkNote[], all: HunkNote[]) {
     ctx.ui.notify(`Addressing ${notes.length} note${notes.length === 1 ? "" : "s"} from Hunk.`, "info");
-    pi.sendUserMessage(fixPrompt({ sessionId, notes, author: config.noteAuthor }));
+    pi.sendUserMessage(fixPrompt({ sessionId, notes, all, author: config.noteAuthor }));
   }
 
   /** Why the menu has no notes row, in the words the reading itself produced. */
@@ -272,7 +274,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
     const choice = menuChoice(rows, picked.value);
     if (!choice) return;
     if (choice.kind === "notes") {
-      if (probe?.kind === "notes") dispatchFix(ctx, probe.sessionId, probe.notes);
+      if (probe?.kind === "notes") dispatchFix(ctx, probe.sessionId, probe.notes, probe.all);
       return;
     }
 
@@ -334,7 +336,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
         const probe = await probeNotes(ctx, parsed.sessionId);
         if (probe.kind === "unavailable") ctx.ui.notify(probe.message, "warning");
         else if (probe.kind === "empty") ctx.ui.notify("No new notes in the Hunk window.", "info");
-        else dispatchFix(ctx, probe.sessionId, probe.notes);
+        else dispatchFix(ctx, probe.sessionId, probe.notes, probe.all);
         return;
       }
 
