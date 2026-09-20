@@ -43,7 +43,7 @@ A project name with a space stays percent-encoded (`My%20Project`) — that is c
 ado_resolve
 ```
 
-`ado_resolve` picks the credential from an allowlist, **infers the auth scheme from the credential's shape**, sets the base URL, and probes `/_apis/connectionData` at `api-version=7.0-preview` — that route is preview-only and rejects a bare `7.0`, while the git and PR routes below are served at `7.0`.
+`ado_resolve` picks the credential from an allowlist, **infers the auth scheme from the credential's shape** (or recognises a nono [phantom token](#proxy-injected-credentials--the-phantom-token-pattern), whose scheme is fixed by the route), sets the base URL, and probes `/_apis/connectionData` at `api-version=7.0-preview` — that route is preview-only and rejects a bare `7.0`, while the git and PR routes below are served at `7.0`.
 
 **Supported Azure DevOps credential variables — the complete list:**
 
@@ -58,35 +58,82 @@ ado_resolve
 
 Sending a PAT as `Bearer` does not return 401 — it returns a **sign-in page with HTTP 200 or 203**. This is the single most common way an Azure DevOps session silently fails.
 
-**`AZURE_BEARER_TOKEN` is not an Azure DevOps credential.** It is minted for the ARM audience (`https://management.azure.com`). dev.azure.com requires audience `499b84ac-1321-427f-aa17-267ca6975798`; the ARM token is rejected against it. **`NONO_PROXY_TOKEN` is not a credential either** — it is the sandbox proxy's own handle. Never `grep` the environment for "token" and treat a hit as a credential; the allowlist above is the only thing that counts.
+**`AZURE_BEARER_TOKEN` is not an Azure DevOps credential** — outside a sandbox. It is minted for the ARM audience (`https://management.azure.com`), and dev.azure.com requires audience `499b84ac-1321-427f-aa17-267ca6975798`. Never `grep` the environment for "token" and treat a hit as a credential; the allowlist above is the only thing that counts.
 
-If `ado_resolve` prints `STOP: no Azure DevOps credential in this session`, that is the final answer. Report that the profile injects no credential and stop. Do not run `az`, do not start a device-code flow, do not probe endpoints.
+*Inside* nono that reasoning does not apply, because `$AZURE_BEARER_TOKEN` is not an ARM token there either — it is a phantom, byte-identical to every other route's phantom (see below). Nothing is gained by reaching for it: the allowlisted variable already holds the same bytes. The allowlist stands because it is the only rule that is right in **both** environments.
 
-### Proxy-injected credentials
+**`NONO_PROXY_TOKEN` is not on the list for a related reason.** It is never itself the thing to send. Where a route has loaded, the allowlisted variable already equals it; where no route has loaded, sending it does active harm. See below.
 
-A nono profile may route `dev.azure.com` through a custom credential with `inject_mode: header`. The proxy then sets `Authorization` itself and the secret **never enters this process** — the env var named in the profile may be empty or absent here, and that is not a fault. `ado_resolve` detects the sandbox, sends no `Authorization` header of its own, and lets the identity probe decide. Sending your own header in this mode can conflict with the injected one.
+If `ado_resolve` prints `STOP: no Azure DevOps credential in this session`, stop and read the sandbox note it prints with it — in a nono session that message names a specific, fixable cause rather than an absent route. Do not run `az`, do not start a device-code flow, do not probe endpoints.
 
-Read the active profile to see the route rather than discovering it by trial and error:
+### Proxy-injected credentials — the phantom token pattern
+
+Inside nono, **a credential variable does not hold a secret.** nono runs a credential-injecting proxy and uses the *phantom token* pattern. The mechanism, from the nono source:
+
+| Step | Where |
+|---|---|
+| The session token is exported as `$NONO_PROXY_TOKEN` | `nono-proxy/src/server.rs:572` |
+| Every **loaded** credential route exports *that same token again* under the route's `env_var` — the phantom | `server.rs:638` |
+| You send the phantom in the service's ordinary auth header; the proxy compares it to the session token, **strips it**, and substitutes the real credential before forwarding | `reverse.rs:1899` |
+
+So `$AZURE_DEVOPS_EXT_PAT` and `$NONO_PROXY_TOKEN` being byte-identical is not a coincidence to route around — it is the design, and it is how you recognise the mode:
 
 ```bash
-python3 - <<'PY'
-import json, os, re, glob
-for f in glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json")):
-    txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
-    try:
-        p = json.loads(txt)
-    except Exception as e:
-        print(f, "UNPARSEABLE:", e); continue
-    for name, c in (p.get("network", {}).get("custom_credentials") or {}).items():
-        if "devops" in name or "dev.azure.com" in (c.get("upstream") or ""):
-            print(f, name, c.get("upstream"), "| env:", c.get("env_var"),
-                  "| mode:", c.get("inject_mode"), "| format:", c.get("credential_format"))
-            for r in c.get("endpoint_rules", []):
-                print("   ", r["method"], r["path"])
-PY
+[ -n "$AZURE_DEVOPS_EXT_PAT" ] && [ "$AZURE_DEVOPS_EXT_PAT" = "$NONO_PROXY_TOKEN" ] && echo "phantom"
+```
+
+**The phantom must be sent, not withheld.** Withholding it is the trap: there is no separate "the proxy sets `Authorization` itself" path. A missing header is `ProxyError::InvalidToken`, exactly like a wrong one.
+
+**And it must be sent in the shape the route's `inject_mode` expects:**
+
+| `inject_mode` | What the proxy accepts | Source |
+|---|---|---|
+| `header` (nono's default) | `<inject_header>: Bearer <phantom>` **or** a bare `<inject_header>: <phantom>` — validation strips one optional case-insensitive `Bearer ` and compares the rest | `reverse.rs:1909-1931` |
+| `basic_auth` | `<inject_header>: Basic base64(user:<phantom>)`; the username is ignored, only the password is compared | `reverse.rs:1945` |
+
+Within `header` mode the scheme genuinely does not matter — bare and `Bearer` are equivalent, so the client needs no knowledge of the route's `credential_format`. What does not carry over is the mode itself: no single shape satisfies both rows. `Basic base64(":" + phantom)` **fails** on a `header`-mode route, because the proxy compares the literal string `Basic OnBo…` against the session token. A PAT-shaped phantom invites exactly that mistake, and the resulting 401 reads like an expired PAT.
+
+**The variable never holds a base64 `user:password` blob.** It is always the raw session token, byte-identical for every route in the session (`server.rs:638` pushes `self.token` verbatim). Where the real upstream credential *is* a `username:password` pair, the proxy encodes it on the far side (`credential.rs:91-95`) — that never enters this process, and it is not something to reconstruct here.
+
+`ado_resolve` detects the phantom and sends `Authorization: Bearer <phantom>`, which is correct for `inject_mode: header` with `inject_header: Authorization`. It prints `nono phantom token` on the `Credential:` line when it does. Run `ado_nono_route` to see the route's actual settings.
+
+#### Telling a proxy rejection from an Azure DevOps one
+
+The proxy answers a failed validation with **401 and the body `{"error":"Unauthorized"}`** (`reverse.rs:2303`) — no `typeKey`, no `typeName`. That is the same bare-payload shape already in the decision table, and it is decisive:
+
+- **Body carries `typeKey`/`typeName`** → the phantom validated, the proxy swapped in the real credential, and Azure DevOps itself answered. The route is not the problem, even on a 401.
+- **Bare `{"error":"Unauthorized"}`** → the proxy rejected you. Azure DevOps never saw the request. Do not touch the credential or the base URL.
+
+#### An empty credential variable means something specific
+
+nono exports a route's phantom **only once that route's real credential has loaded** (`server.rs:630`). So in a nono session with a configured `dev.azure.com` route:
+
+> **empty `$AZURE_DEVOPS_EXT_PAT` = the upstream secret failed to load at proxy start.**
+
+It does *not* mean "no route" and it does *not* mean "the proxy will supply the credential". Usually the secret behind the route's `credential_key` expired.
+
+Do **not** substitute `$NONO_PROXY_TOKEN` by hand here. With no loaded route there is nothing to swap it for; the proxy forwards it and Azure DevOps answers with a sign-in page — a failure that reads like a dead PAT and is not one.
+
+The fix is to refresh the secret named by the route's `credential_key` and restart the nono session so the proxy reloads it:
+
+```bash
+ado_nono_route
+```
+
+```
+route:           azure_devops -> https://dev.azure.com
+env_var:         AZURE_DEVOPS_EXT_PAT   (holds the phantom, never a secret)
+inject_mode:     header
+inject_header:   Authorization
+credential_key:  env://AZURE_ACCESS_TOKEN   <- refresh THIS when the env_var is empty
+endpoint_rules:  every path permitted
 ```
 
 An empty `endpoint_rules` list means every path on that host is permitted.
+
+#### The proxy hop itself needs nothing from you
+
+Separately from the phantom, the CONNECT hop is authenticated with `Proxy-Authorization`. nono sets `HTTP_PROXY=http://nono:<token>@127.0.0.1:<port>`, so curl and every other standard client send it automatically (`server.rs:533`), and the proxy strips it as hop-by-hop. There is nothing to configure, and `Proxy-Authorization` is never the cause of a 401 you can fix from the script.
 
 ### Why `az` / `az repos` is not an option inside nono
 
@@ -149,7 +196,10 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 | HTML sign-in page / HTTP 203 (`SignInPage`) | No usable credential reached the API, or a PAT was sent as Bearer | Return to `ado_resolve`. Do not change the URL, api-version, or headers |
 | `Anonymous` identity on HTTP 200 | Request accepted as nobody | Same as above — the credential, not the request |
 | `401 Unauthorized` **from a `dev.azure.com` base** | PAT expired or revoked | Ask the user for a fresh credential. Stop |
-| `401` whose body is not an Azure DevOps error (no `typeKey`/`typeName`, e.g. `{"error":"Unauthorized"}`) | An intermediary answered — the request never reached Azure DevOps | Check the base URL `ado_resolve` printed. Re-run with `AZURE_DEVOPS_BASE_URL=https://dev.azure.com`. Do not touch the credential |
+| `401` whose body is not an Azure DevOps error (no `typeKey`/`typeName`, e.g. `{"error":"Unauthorized"}`) — **outside** a sandbox | An intermediary answered — the request never reached Azure DevOps | Check the base URL `ado_resolve` printed. Re-run with `AZURE_DEVOPS_BASE_URL=https://dev.azure.com`. Do not touch the credential |
+| Same bare `401`, **inside** a sandbox (`ado_resolve` printed `Sandbox … yes`) | The nono proxy rejected the phantom token. Azure DevOps never saw the request | Confirm `ado_resolve` printed `nono phantom token`, then check the shape against the route's `inject_mode` (`ado_nono_route`). Do not touch the credential and do not change the base URL |
+| Any error carrying `typeKey`/`typeName`, inside a sandbox | **The phantom validated** — the proxy swapped in the real credential and Azure DevOps answered | Read the row for that specific error. The route is not the problem |
+| Empty credential variable in a nono session (`STOP` with the sandbox note) | The route's upstream secret failed to load at proxy start — usually expired | Refresh the secret named by the route's `credential_key` (`ado_nono_route`), then restart the nono session. Never hand-send `$NONO_PROXY_TOKEN` instead |
 | `403` with `VS403403` / "does not have permission" | Credential is valid, PAT scope too narrow | Report the needed scope: `vso.code` to read, `vso.code_write` to reply or change thread status. Stop |
 | `TF400813` / `TF401019` | Principal has no access to this project or repo | Report the missing access and scope. Stop |
 | `GitRepositoryNotFoundException` on a path that looks right | Repo name wrong, or the project segment is missing from the base URL | Re-run `ado_discover`; the base must be `.../{org}/{project}/_apis/...`, never org-only |
@@ -166,6 +216,8 @@ The dividing line: the last two rows mean you are already inside the API and the
 `ado_resolve` takes the base from `$AZURE_DEVOPS_BASE_URL` and falls back to `https://dev.azure.com`. In a sandbox that variable often points at a **local proxy** (`http://127.0.0.1:<port>/azure_devops`), and the port is regenerated per call — a base that changes between runs is the tell.
 
 A proxy answers with its own errors. `{"error":"Unauthorized"}` and HTTP 401 is the proxy refusing the request; the PAT was never presented to Azure DevOps. Reading it as a dead credential sends you to "ask for a fresh credential, stop" while nothing is wrong with the credential at all.
+
+A wrong base URL is one way to land there. **Inside a sandbox, a rejected phantom token is the more likely one**, and it needs the opposite fix — see [the phantom token pattern](#proxy-injected-credentials--the-phantom-token-pattern). Check `ado_resolve`'s `Sandbox` line before you reach for `AZURE_DEVOPS_BASE_URL`.
 
 Two things separate the two cases:
 

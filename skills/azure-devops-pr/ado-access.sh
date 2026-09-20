@@ -15,8 +15,15 @@
 # however token-like its name looks.
 #   *_PAT / *_TOKEN from this list  -> Basic auth (user "", password PAT)
 #   SYSTEM_ACCESSTOKEN / a JWT      -> Bearer
-# AZURE_BEARER_TOKEN is deliberately absent: it is an ARM-audience token.
-# dev.azure.com needs audience 499b84ac-1321-427f-aa17-267ca6975798.
+# AZURE_BEARER_TOKEN is deliberately absent: outside a sandbox it is an
+# ARM-audience token, and dev.azure.com needs audience
+# 499b84ac-1321-427f-aa17-267ca6975798.
+#
+# NONO_PROXY_TOKEN is absent for a different reason: it is never itself the
+# credential to send. Inside nono the variables above hold a PHANTOM equal to
+# it, and ado__pick_cred recognises that. Reaching for NONO_PROXY_TOKEN
+# directly only makes sense when a route loaded, in which case the allowlisted
+# variable already holds the same bytes. See ado__pick_cred.
 ADO_CRED_VARS="AZURE_DEVOPS_EXT_PAT AZURE_DEVOPS_PAT ADO_PAT SYSTEM_ACCESSTOKEN"
 
 ado__json() { python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))'; }
@@ -69,21 +76,42 @@ PY
   ADO_DISCOVERED=1
 }
 
-# -------------------------------------------------------------------- resolve
-# Sets ADO_BASE and the ADO_AUTH_HEADER used by every later call.
-ado_resolve() {
-  ADO_RESOLVED=""
-  ADO_SANDBOX=no
-  [ -n "${NONO_CAP_FILE:-}" ] && ADO_SANDBOX=yes
-  echo "Sandbox (NONO_CAP_FILE): $ADO_SANDBOX"
-
-  if [ -z "${ADO_DISCOVERED:-}" ]; then
-    echo "Run ado_discover first — the identity probe is org-scoped."
-    return 2
-  fi
-
+# ------------------------------------------------------- credential selection
+# Sets ADO_CRED, ADO_CRED_VAR, ADO_SCHEME, ADO_PHANTOM and ADO_AUTH_HEADER.
+#
+# Inside nono a credential variable does not hold a secret. nono runs a
+# credential-injecting proxy and uses the PHANTOM TOKEN pattern
+# (nono-proxy/README.md; crates/nono-proxy/src/server.rs):
+#
+#   * The session token is exported as $NONO_PROXY_TOKEN (server.rs:572).
+#   * Each LOADED credential route exports that same token again under the
+#     route's own env_var (server.rs:638) — so $AZURE_DEVOPS_EXT_PAT is
+#     byte-for-byte $NONO_PROXY_TOKEN. That identity is the tell, not a fluke.
+#   * You send the phantom in the service's normal auth header. The proxy
+#     compares it to the session token, strips it, and substitutes the real
+#     credential before forwarding (reverse.rs:1899).
+#
+# The env_var always holds the RAW session token — never a base64 user:password
+# blob (server.rs:638 pushes self.token verbatim). Where the upstream credential
+# really is a user:password pair, the proxy encodes it itself on the far side
+# (credential.rs:91-95); that never reaches this process.
+#
+# So the phantom must be SENT, not withheld, and in the shape the route's
+# inject_mode expects. Within inject_mode=header (nono's default, and this
+# route's setting) the scheme does not matter: validation strips one optional
+# case-insensitive "Bearer " and compares the rest, so `Bearer <phantom>` and a
+# bare `<phantom>` are equivalent, while Basic fails (reverse.rs:1909-1931).
+# inject_mode=basic_auth is the one that differs — it requires the literal
+# "Basic " prefix and a colon in the decoded value, comparing only the password
+# field (reverse.rs:1945, token.rs:349). No single shape satisfies both modes.
+#
+# A mismatched or missing header is ProxyError::InvalidToken, returned as 401
+# with the body {"error":"Unauthorized"} (reverse.rs:2303). That body carries no
+# typeKey/typeName, which is exactly how ado__report separates a proxy rejection
+# from an Azure DevOps one.
+ado__pick_cred() {
   local var val
-  ADO_CRED=""; ADO_CRED_VAR=""; ADO_SCHEME=""
+  ADO_CRED=""; ADO_CRED_VAR=""; ADO_SCHEME=""; ADO_PHANTOM=no
   # Unquoted command substitution word-splits in both bash and zsh; a bare
   # "$ADO_CRED_VARS" would stay one word in zsh. Likewise ${!var} is bash-only,
   # so read the variable through eval. This file gets sourced into either shell.
@@ -91,34 +119,107 @@ ado_resolve() {
     eval "val=\${$var-}"
     [ -z "$val" ] && continue
     ADO_CRED_VAR="$var"; ADO_CRED="$val"
-    # A JWT (three dot-separated base64url parts) is an Entra token -> Bearer.
-    case "$val" in
-      eyJ*.*.*) ADO_SCHEME=bearer ;;
-      *)        ADO_SCHEME=basic ;;
-    esac
     break
   done
 
+  if [ -n "$ADO_CRED" ] && [ -n "${NONO_PROXY_TOKEN:-}" ] &&
+     [ "$ADO_CRED" = "$NONO_PROXY_TOKEN" ]; then
+    ADO_PHANTOM=yes
+    ADO_SCHEME=bearer
+    ADO_AUTH_HEADER="Authorization: Bearer $ADO_CRED"
+    echo "Credential:  \$$ADO_CRED_VAR — nono phantom token (byte-identical to \$NONO_PROXY_TOKEN)"
+    echo "             sent as 'Authorization: Bearer <phantom>'; the proxy swaps in the real credential."
+    return 0
+  fi
+
   if [ -n "$ADO_CRED" ]; then
+    # A real secret in this process. A JWT (three dot-separated base64url parts)
+    # is an Entra token -> Bearer; anything else is a PAT -> Basic.
+    case "$ADO_CRED" in
+      eyJ*.*.*) ADO_SCHEME=bearer ;;
+      *)        ADO_SCHEME=basic ;;
+    esac
     if [ "$ADO_SCHEME" = basic ]; then
       ADO_AUTH_HEADER="Authorization: Basic $(printf ':%s' "$ADO_CRED" | base64 | tr -d '\n')"
     else
       ADO_AUTH_HEADER="Authorization: Bearer $ADO_CRED"
     fi
     echo "Credential:  \$$ADO_CRED_VAR (scheme: $ADO_SCHEME)"
-  elif [ "$ADO_SANDBOX" = yes ]; then
-    # nono profiles route dev.azure.com through a custom credential with
-    # inject_mode=header: the proxy sets Authorization itself and the value
-    # never enters this process. Send none and let the probe decide.
-    ADO_AUTH_HEADER=""
-    echo "Credential:  none local — relying on sandbox proxy header injection"
+    return 0
+  fi
+
+  echo "STOP: no Azure DevOps credential in this session."
+  echo "  Checked: $ADO_CRED_VARS"
+  if [ "${ADO_SANDBOX:-no}" = yes ] && [ -n "${NONO_PROXY_TOKEN:-}" ]; then
+    echo
+    echo "  An empty credential variable in a nono session is a specific, fixable state —"
+    echo "  not a missing route. nono exports a route's phantom token only once that"
+    echo "  route's real credential has loaded (server.rs:630), so empty means the"
+    echo "  upstream secret failed to load at proxy start. Usually it expired."
+    echo
+    echo "  Do NOT substitute \$NONO_PROXY_TOKEN by hand. With no loaded route there is"
+    echo "  nothing for the proxy to swap it for: it forwards the token and Azure DevOps"
+    echo "  answers with a sign-in page, which reads like a dead PAT and is not one."
+    echo
+    echo "  Fix: refresh the secret named by the route's credential_key, then restart the"
+    echo "  nono session so the proxy reloads it. 'ado_nono_route' names that secret."
+  fi
+  return 2
+}
+
+# Print the nono credential route for dev.azure.com, when the active profile is
+# readable. Diagnosis only — it never changes what ado_resolve sends.
+ado_nono_route() {
+  local out
+  out=$(python3 - <<'NONOPY'
+import json, os, re, glob, sys
+found = False
+for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
+    txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
+    try:
+        p = json.loads(txt)
+    except Exception as e:
+        print("%s UNPARSEABLE: %s" % (f, e)); continue
+    for name, c in (p.get("network", {}).get("custom_credentials") or {}).items():
+        if "devops" not in name and "dev.azure.com" not in (c.get("upstream") or ""):
+            continue
+        found = True
+        print("profile:         %s" % os.path.basename(f))
+        print("route:           %s -> %s" % (name, c.get("upstream")))
+        print("env_var:         %s   (holds the phantom, never a secret)" % c.get("env_var"))
+        print("inject_mode:     %s" % (c.get("inject_mode") or "header (default)"))
+        print("inject_header:   %s" % (c.get("inject_header") or "Authorization (default)"))
+        print("credential_key:  %s   <- refresh THIS when the env_var is empty" % c.get("credential_key"))
+        rules = c.get("endpoint_rules") or []
+        print("endpoint_rules:  %s" % ("every path permitted" if not rules else ""))
+        for r in rules:
+            print("                 %s %s" % (r.get("method"), r.get("path")))
+sys.exit(0 if found else 1)
+NONOPY
+)
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out"
   else
-    echo "STOP: no Azure DevOps credential in this session."
-    echo "  Checked: $ADO_CRED_VARS"
-    echo "  AZURE_BEARER_TOKEN is an ARM token and must not be sent to dev.azure.com."
-    echo "  NONO_PROXY_TOKEN is the sandbox's own handle, not a credential."
+    echo "  (no readable dev.azure.com route — ask which profile the session was started with)"
+  fi
+}
+
+# -------------------------------------------------------------------- resolve
+# Sets ADO_BASE and the ADO_AUTH_HEADER used by every later call.
+ado_resolve() {
+  ADO_RESOLVED=""
+  ADO_AUTH_HEADER=""      # never inherit a header from an earlier run
+  ADO_SANDBOX=no
+  [ -n "${NONO_CAP_FILE:-}" ] && ADO_SANDBOX=yes
+  export ADO_SANDBOX      # ado__report changes its hints inside the sandbox
+  echo "Sandbox (NONO_CAP_FILE): $ADO_SANDBOX"
+
+  if [ -z "${ADO_DISCOVERED:-}" ]; then
+    echo "Run ado_discover first — the identity probe is org-scoped."
     return 2
   fi
+
+  ado__pick_cred || return 2
 
   ADO_BASE="${AZURE_DEVOPS_BASE_URL:-https://dev.azure.com}"
   ADO_BASE="${ADO_BASE%/}"
@@ -189,18 +290,34 @@ try:
 except Exception:
     fail("NonJson", body[:2000] or "<empty body>")
 
+sandbox = os.environ.get("ADO_SANDBOX") == "yes"
+
 if isinstance(d, dict) and (d.get("typeKey") or d.get("typeName") or not status.startswith("2")):
     key = d.get("typeKey") or d.get("errorCode") or status
     hint = None
     if not (d.get("typeKey") or d.get("typeName")):
         # Azure DevOps errors always carry typeKey/typeName. A bare {"error": ...}
         # came from something in front of the API, not from the API.
-        hint = ("not an Azure DevOps error payload - an intermediary answered at %s. "
-                "Fix the base URL before touching the credential"
+        hint = ("not an Azure DevOps error payload - an intermediary answered at %s, so the "
+                "request never reached Azure DevOps"
                 % (os.environ.get("ADO_BASE") or "the configured base URL"))
+        hint += (". In the sandbox that intermediary is the nono proxy rejecting the phantom "
+                 "token: the value of the credential variable has to be presented in the auth header of the route "
+                 "- Bearer for inject_mode=header, Basic base64(user:phantom) for "
+                 "basic_auth. Run ado_nono_route. Do not change the base URL or the credential"
+                 if sandbox else
+                 ". Fix the base URL before touching the credential")
     elif "PreviewVersion" in str(key):
         hint = ("that route is preview-only - append -preview to its api-version. "
                 "Access is fine; this is the probe, not the credential")
+    elif sandbox:
+        # typeKey/typeName present = Azure DevOps itself answered, which proves
+        # the phantom validated and the proxy already swapped in the real
+        # credential. Keeps a 401 here from being misread as a routing problem.
+        hint = ("this IS an Azure DevOps error payload, so the phantom validated and the proxy "
+                "forwarded the real credential - the fault is that credential or the request, "
+                "not the route. Refresh the secret named by credential_key on that route "
+                "(ado_nono_route) rather than touching the phantom")
     fail(key, d.get("message") or json.dumps(d)[:2000], hint)
 
 if identity:
@@ -213,6 +330,10 @@ if identity:
     if anon:
         fail("Anonymous",
              "Request succeeded but Azure DevOps authenticated nobody (identity: %s)." % name,
+             "a 200 here does not mean access - in the sandbox this means no credential route "
+             "matched, so the proxy forwarded the request unauthenticated (check the "
+             "route upstream host with ado_nono_route); outside one, the local credential is dead. "
+             "Either way: fix the credential, do not retry the URL" if sandbox else
              "a 200 here does not mean access - fix the credential, do not retry the URL")
     print("%s: OK (HTTP %s) - authenticated as %s" % (label, status, name))
     sys.exit(0)

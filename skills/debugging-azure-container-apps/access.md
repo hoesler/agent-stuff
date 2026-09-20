@@ -31,9 +31,26 @@ az_resolve
 
 `AZURE_BEARER_TOKEN`, `AZURE_MANAGEMENT_BEARER_TOKEN`, `AZURE_ACCESS_TOKEN`
 
-**`NONO_PROXY_TOKEN` is not an Azure credential.** It is the sandbox proxy's own handle. Sending it to Azure yields `401 InvalidTokenError`. Never `grep` the environment for "token" and treat a hit as an Azure credential — the allowlist above is the only thing that counts.
+**Inside nono these variables usually hold a phantom token, not a secret.** nono runs a credential-injecting proxy: each *loaded* route exports the session token — the same bytes as `$NONO_PROXY_TOKEN` — under the route's `env_var` (`nono-proxy/src/server.rs:638`). You send that phantom in the normal `Authorization` header; the proxy validates it, strips it, and substitutes the real credential upstream (`reverse.rs:1899`). The `Bearer` header this skill already sends is the correct shape for a route with `inject_mode: header`, which is what the Azure routes use — so nothing changes in how you call, only in how you read failures.
 
-If `az_resolve` prints `STOP: no Azure credential in this session`, that is the final answer for this session. Report to the user that the nono profile injects no Azure credential and stop. Do not run `az`, do not start a device-code flow, do not probe endpoints.
+**`NONO_PROXY_TOKEN` is still not on the allowlist**, but the old reason for that was wrong. It is not "a handle Azure rejects": where a route has loaded it is byte-identical to `$AZURE_BEARER_TOKEN`, so sending it changes nothing. Where no route has loaded, there is nothing to swap it for and the proxy forwards it to Azure, which answers `401 InvalidTokenError` — that is where the old observation came from. Either way, reaching for it is never the fix. Never `grep` the environment for "token" and treat a hit as an Azure credential; the allowlist above is the only thing that counts.
+
+**An empty credential variable means something specific.** nono exports a route's phantom only once that route's real credential has loaded (`server.rs:630`). So in a nono session, empty `$AZURE_BEARER_TOKEN` = the upstream secret failed to load at proxy start, usually expired — *not* "the profile injects no Azure credential". Refresh the secret named by the route's `credential_key` and restart the nono session:
+
+```bash
+az_nono_route
+```
+
+```
+route:           azure_arm -> https://management.azure.com
+  env_var:       AZURE_BEARER_TOKEN   (holds the phantom, never a secret)
+  inject_mode:   header
+  credential_key: env://AZURE_ACCESS_TOKEN   <- refresh THIS when the env_var is empty
+```
+
+If `az_resolve` prints `STOP: no Azure credential in this session` outside a nono session, that is the final answer. Do not run `az`, do not start a device-code flow, do not probe endpoints.
+
+**Telling a proxy rejection from an Azure one.** The proxy answers a failed phantom validation with `401 {"error":"Unauthorized"}` (`reverse.rs:2303`) — a bare string, where every Azure error is an object with a `code`. `az__report` now labels that `ProxyRejected`. A real Azure `code` proves the opposite: the phantom validated, the proxy forwarded the real credential, and the fault is that credential or the request — not the route.
 
 ### Why `az` is not an option inside nono
 
@@ -169,7 +186,7 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 | Error | Interpretation | Next action |
 |---|---|---|
 | `InvalidTokenError`, `SignatureVerificationFailed`, `InvalidAuthenticationToken` | Wrong audience for the endpoint, or a proxy token sent as an Azure token | Return to `az_resolve` and use Mode A. Do not change KQL, api-version, or headers |
-| `401` from `api.loganalytics.io` | ARM token used against the data plane, or expired token | Switch to Mode A; if the token expired, ask the user for a fresh session |
+| `401` from `api.loganalytics.io` | ARM token used against the data plane, or expired token | Switch to Mode A. In nono the LA route usually shares the ARM route's `credential_key` (`az_nono_route`), so there is no second credential to try — Mode A is the only path |
 | `AuthorizationFailed`, RBAC `403` | Token is valid, principal lacks the role | Report the missing role and scope. Stop |
 | Proxy `Forbidden` / no HTTP response | Route or endpoint rule does not permit this path | Read the profile's `endpoint_rules` (Step 1) and report the required route |
 | `ResourceNotFound` on a workspace path | `customerId` GUID used where `workspaceResourceName` belongs | Re-run `az_workspaces`; use the resource name |
