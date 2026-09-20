@@ -49,6 +49,7 @@ All are defined by `ado-access.sh` and usable only after the gate passes.
 | `ado_threads` | All comment threads |
 | `ado_reply <threadId> <parentCommentId> <markdown>` | Reply in a thread |
 | `ado_thread_status <threadId> <status>` | Set thread status |
+| `ado_nono_route` | Show the nono credential route for dev.azure.com (diagnosis only) |
 | `ado_api <METHOD> <path> [json]` | Anything else, project-scoped |
 
 `ado_api` appends `api-version=7.0` unless the path already carries one, escapes bodies through `json.dumps`, and classifies every response before printing it. Prefer it over hand-rolled `curl`: a raw `curl | jq` against dev.azure.com turns an auth failure into a parse error.
@@ -167,6 +168,10 @@ Add `threadContext` to anchor the thread to a file/line.
 | Treating an HTML response or `jq` parse error as a tooling problem | It is an auth failure. Return to `ado_resolve` ([access.md](access.md)) |
 | Sending a PAT as `Authorization: Bearer` | PATs use Basic auth with an empty username. `ado_resolve` infers this from the credential |
 | Sending `AZURE_BEARER_TOKEN` to dev.azure.com | That is an ARM-audience token. Wrong audience; it will never work here |
+| Treating `$AZURE_DEVOPS_EXT_PAT` as a PAT when it is byte-identical to `$NONO_PROXY_TOKEN` | It is a nono *phantom token*, not a PAT. It goes out as `Bearer`, not Basic — `ado_resolve` prints `nono phantom token` when it detects this ([access.md](access.md#proxy-injected-credentials--the-phantom-token-pattern)) |
+| Sending no `Authorization` at all in a sandbox, expecting the proxy to supply it | The proxy replaces a *validated phantom*; it never conjures one. A missing header fails identically to a wrong one |
+| Treating an empty credential variable in a sandbox as "no route" | nono exports the phantom only once the route's real secret loads. Empty means that secret expired — refresh it (`ado_nono_route`), do not hand-send `$NONO_PROXY_TOKEN` |
+| Reading a sandbox `401` as a dead credential | Check the body's shape first: `typeKey`/`typeName` present = Azure DevOps answered, so the phantom was fine; a bare `{"error":"Unauthorized"}` = the proxy refused it |
 | Using org-level base URL for git routes | Base must include the project: `.../dev.azure.com/{org}/{project}/_apis/...` |
 | Branch ref without prefix | Use `refs/heads/{branch}`, not the bare branch name |
 | Wrong `parentCommentId` | Must be `comments[0].id` (e.g. `1`), never `0` or `null` |
