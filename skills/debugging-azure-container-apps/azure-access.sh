@@ -12,8 +12,20 @@
 
 # ---------------------------------------------------------------- credentials
 # Allowlist. Anything not on this list is NOT an Azure credential, however
-# token-like its name looks. NONO_PROXY_TOKEN in particular is the sandbox's
-# own proxy handle and is deliberately absent.
+# token-like its name looks.
+#
+# Inside nono these variables usually do not hold a secret at all. nono runs a
+# credential-injecting proxy and exports a PHANTOM token - the session token,
+# the same bytes as $NONO_PROXY_TOKEN - under each loaded route env_var
+# (nono crates/nono-proxy/src/server.rs:638). You send the phantom in the normal
+# Authorization header; the proxy validates it, strips it, and substitutes the
+# real credential upstream (reverse.rs:1899). Bearer is the right shape for a
+# route with inject_mode=header, which is what the Azure routes use, so the
+# Bearer header this file already sends is correct in both worlds.
+#
+# NONO_PROXY_TOKEN is deliberately absent, but not because it is junk: where a
+# route has loaded, the allowlisted variable already equals it, and where no
+# route has loaded, sending it only gets it forwarded to Azure and rejected.
 AZ_CRED_VARS="AZURE_BEARER_TOKEN AZURE_MANAGEMENT_BEARER_TOKEN AZURE_ACCESS_TOKEN"
 
 az__json() { python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))'; }
@@ -27,12 +39,13 @@ az__post() {
 }
 
 az__REPORT_PY='
-import json, sys
+import json, os, sys
 label = sys.argv[1]
 raw = sys.stdin.read().rsplit("\n", 1)
 body = raw[0]
 status = (raw[1] if len(raw) > 1 else "").strip()
-code = msg = ""
+code = msg = hint = ""
+sandbox = os.environ.get("AZ_SANDBOX") == "yes"
 try:
     d = json.loads(body)
     e = d.get("error") or d.get("Error") or {}
@@ -43,6 +56,19 @@ try:
         for inner in (e.get("innererror"), e.get("details")):
             if inner:
                 msg += " || " + json.dumps(inner)
+    elif isinstance(e, str) and e:
+        # Every Azure error is an object with a code. A bare {"error": "<string>"}
+        # is an intermediary answering - in nono, the proxy rejecting the phantom
+        # token before Azure ever saw the request (reverse.rs:2303 sends exactly
+        # 401 {"error":"Unauthorized"}).
+        code, msg = "ProxyRejected", e
+        hint = ("not an Azure error payload - an intermediary answered, so the request never "
+                "reached Azure")
+        if sandbox:
+            hint += (". That is the nono proxy rejecting the phantom token: the value of the "
+                     "credential variable must go out as Authorization: Bearer <phantom> for a "
+                     "route with inject_mode=header. Run az_nono_route. Do not touch the "
+                     "credential and do not change the base URL")
 except Exception:
     msg = body[:2000] if body.strip() else "<empty body>"
 ok = status.startswith("2") and not code
@@ -50,8 +76,16 @@ print("%s: %s (HTTP %s)" % (label, "OK" if ok else "FAIL", status or "none - req
 if not ok:
     print("  code:    %s" % (code or "<none>"))
     print("  message: %s" % msg[:2000])
+    if not hint and sandbox and code:
+        # A real Azure error code proves the phantom validated and the proxy
+        # forwarded the real credential. The route is not the suspect.
+        hint = ("this IS an Azure error payload, so the phantom validated and the proxy "
+                "forwarded the real credential - the fault is that credential or the request, "
+                "not the route")
     if status in ("", "000"):
-        print("  hint:    no HTTP response - host blocked by sandbox network policy, or wrong base URL host")
+        hint = "no HTTP response - host blocked by sandbox network policy, or wrong base URL host"
+    if hint:
+        print("  hint:    %s" % hint)
 sys.exit(0 if ok else 1)
 '
 
@@ -60,11 +94,44 @@ az__report() {
   python3 -c "$az__REPORT_PY" "$1"
 }
 
+# Print the nono credential routes for the Azure hosts, when the active profile
+# is readable. Diagnosis only - it never changes what az_resolve sends.
+az_nono_route() {
+  local out
+  out=$(python3 - <<'NONOPY'
+import json, os, re, glob, sys
+found = False
+for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
+    txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
+    try:
+        p = json.loads(txt)
+    except Exception as e:
+        print("%s UNPARSEABLE: %s" % (f, e)); continue
+    for name, c in (p.get("network", {}).get("custom_credentials") or {}).items():
+        up = c.get("upstream") or ""
+        if not any(h in up for h in ("management.azure.com", "loganalytics.io")):
+            continue
+        found = True
+        print("route:           %s -> %s" % (name, up))
+        print("  env_var:       %s   (holds the phantom, never a secret)" % c.get("env_var"))
+        print("  inject_mode:   %s" % (c.get("inject_mode") or "header (default)"))
+        print("  credential_key: %s   <- refresh THIS when the env_var is empty" % c.get("credential_key"))
+sys.exit(0 if found else 1)
+NONOPY
+)
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out"
+  else
+    echo "  (no readable Azure route - ask which profile the session was started with)"
+  fi
+}
+
 # ------------------------------------------------------------------- resolve
 az_resolve() {
   AZ_RESOLVED=""
   AZ_SANDBOX=no
   [ -n "${NONO_CAP_FILE:-}" ] && AZ_SANDBOX=yes
+  export AZ_SANDBOX        # az__report changes its hints inside the sandbox
   echo "Sandbox (NONO_CAP_FILE): $AZ_SANDBOX"
 
   AZ_TOKEN=""; AZ_TOKEN_VAR=""
@@ -85,17 +152,40 @@ az_resolve() {
   if [ -z "$AZ_TOKEN" ]; then
     echo "STOP: no Azure credential in this session."
     echo "  Checked: $AZ_CRED_VARS"
-    echo "  NONO_PROXY_TOKEN does not count and must not be sent to Azure."
-    [ "$AZ_SANDBOX" = yes ] && echo "  This nono profile injects no Azure credential. Report to the user; do not run 'az'."
+    if [ "$AZ_SANDBOX" = yes ] && [ -n "${NONO_PROXY_TOKEN:-}" ]; then
+      echo
+      echo "  In a nono session an empty credential variable is a specific, fixable state,"
+      echo "  not an absent route. nono exports a route phantom token only once that route"
+      echo "  real credential has loaded (server.rs:630), so empty means the upstream secret"
+      echo "  failed to load at proxy start. Usually it expired."
+      echo
+      echo "  Do NOT substitute \$NONO_PROXY_TOKEN by hand. With no loaded route there is"
+      echo "  nothing to swap it for: the proxy forwards it and Azure rejects it with"
+      echo "  401 InvalidTokenError, which reads like a dead token and is not one."
+      echo
+      echo "  Fix: refresh the secret named by the route credential_key, then restart the"
+      echo "  nono session so the proxy reloads it. 'az_nono_route' names that secret."
+    elif [ "$AZ_SANDBOX" = yes ]; then
+      echo "  This nono profile injects no Azure credential. Report to the user; do not run 'az'."
+    fi
     return 2
   fi
-  echo "Credential:  \$$AZ_TOKEN_VAR"
+  if [ -n "${NONO_PROXY_TOKEN:-}" ] && [ "$AZ_TOKEN" = "$NONO_PROXY_TOKEN" ]; then
+    echo "Credential:  \$$AZ_TOKEN_VAR — nono phantom token (byte-identical to \$NONO_PROXY_TOKEN)"
+    echo "             sent as Bearer; the proxy validates it and swaps in the real credential."
+  else
+    echo "Credential:  \$$AZ_TOKEN_VAR"
+  fi
 
   AZ_ARM="${AZURE_ARM_BASE_URL:-https://management.azure.com}"
   AZ_ARM="${AZ_ARM%/}"
   echo "ARM base:    $AZ_ARM"
   [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] &&
-    echo "LA base:     ${AZURE_LOG_ANALYTICS_BASE_URL%/} (data plane; needs its own LA-audience credential)"
+    echo "LA base:     ${AZURE_LOG_ANALYTICS_BASE_URL%/} (data plane; needs an LA-audience credential)"
+  [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] && [ "$AZ_SANDBOX" = yes ] &&
+    echo "             in nono the LA route usually shares the ARM route credential_key, so there is"
+  [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] && [ "$AZ_SANDBOX" = yes ] &&
+    echo "             no second variable to reach for - check with az_nono_route, then use Mode A."
 
   # ARM probe = Resource Graph. Do NOT probe with GET /subscriptions: sandbox
   # profiles routinely allow Resource Graph and per-resource-group reads while

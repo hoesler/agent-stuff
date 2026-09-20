@@ -117,7 +117,8 @@ If these are the *only* errors present, you are looking at the wrong time window
 |---------|---------------|
 | Treating a successful ARM call as proof of log access | Different audience, path, and endpoint rule. Only `az_gate` proves it |
 | Trying another token, base URL, header, or api-version after an auth error | Each access error has one corrective action ([access.md](access.md)). Cycling combinations never finds it |
-| Treating any env var containing "token" as an Azure credential | `NONO_PROXY_TOKEN` is the sandbox's proxy handle. Azure returns `401 InvalidTokenError` |
+| Treating any env var containing "token" as an Azure credential | The allowlist is the only rule. In nono the allowlisted var holds a *phantom* equal to `$NONO_PROXY_TOKEN`, so substituting the latter gains nothing; where no route loaded it gains a `401 InvalidTokenError` ([access.md](access.md)) |
+| Reading an empty `$AZURE_BEARER_TOKEN` in nono as "no Azure credential" | nono exports the phantom only once the route's real secret loads. Empty means that secret expired — refresh it (`az_nono_route`) and restart the session |
 | Using the `customerId` GUID as the workspace name in an ARM path | ARM needs `workspaceResourceName`; the GUID belongs only to the data-plane API |
 | Assuming app columns for a Container App Job | Jobs use `ContainerJobName_s`; the wrong column returns zero rows silently |
 | Concluding "no logs" from an empty result | Ingestion lag, wrong table name, wrong column, or wrong time window |
