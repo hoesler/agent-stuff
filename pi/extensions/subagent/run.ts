@@ -94,13 +94,23 @@ export interface AgentRunOptions {
 /**
  * How long a child may go completely silent before it is assumed stuck.
  *
- * Deliberately generous. The gaps it has to clear are not the typical pause
- * between events but the worst legitimate one: reasoning a provider does
- * server-side without streaming deltas, time to first token under load, and a
- * retry's backoff. Erring high costs a deadlock a slower death; erring low
- * kills work that was in progress, which is the failure this replaced.
+ * Sized against the longest legitimate silence, which is a tool call that
+ * prints nothing. pi's bash tool emits a `tool_execution_update` only when the
+ * command writes output, so a command that streams — a test runner, a build,
+ * an installer — keeps the stream alive indefinitely, while one that stays
+ * quiet until it finishes (`tsc` is the everyday example) is indistinguishable
+ * from a deadlock from out here. Nothing at this seam can tell them apart.
+ *
+ * Hence the asymmetry this number is chosen on: waiting out a deadlock costs
+ * only wall clock, since a hung child issues no requests and burns no tokens,
+ * while killing a working command throws away the whole run. Erring high is
+ * nearly free; erring low is the failure this replaced.
+ *
+ * Provider-side silence — reasoning that streams no deltas, time to first
+ * token under load — is well inside this. A retry announces itself with
+ * `auto_retry_start`, so backoff is not silence at all.
  */
-export const IDLE_SECONDS = 180;
+export const IDLE_SECONDS = 600;
 
 /** Terminal states a run can end in: a non-zero exit, or a stop the child or we ourselves forced. */
 const FAILED_STOP_REASONS = new Set(["error", "aborted", "timeout"]);
