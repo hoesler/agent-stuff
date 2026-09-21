@@ -74,13 +74,33 @@ export interface AgentRunOptions {
 	/** The prompt handed to the child, verbatim. */
 	task: string;
 	cwd: string;
-	/** Wall-clock budget for this run. Absent means the run is unbounded. */
+	/**
+	 * Hard ceiling on this run's wall clock. Absent means no ceiling — the idle
+	 * deadline is what ordinarily stops a run that has stopped working.
+	 */
 	timeoutSeconds?: number;
+	/**
+	 * How long the child may emit nothing at all before it is terminated.
+	 * Defaults to `IDLE_SECONDS`; overridden in tests, and deliberately not
+	 * reachable from either tool's schema.
+	 */
+	idleSeconds?: number;
 	signal?: AbortSignal;
 	onUpdate?: (result: AgentRunResult) => void;
 	/** Overridden in tests; defaults to spawning the real child pi. */
 	spawnChild?: SpawnChild;
 }
+
+/**
+ * How long a child may go completely silent before it is assumed stuck.
+ *
+ * Deliberately generous. The gaps it has to clear are not the typical pause
+ * between events but the worst legitimate one: reasoning a provider does
+ * server-side without streaming deltas, time to first token under load, and a
+ * retry's backoff. Erring high costs a deadlock a slower death; erring low
+ * kills work that was in progress, which is the failure this replaced.
+ */
+export const IDLE_SECONDS = 180;
 
 /** Terminal states a run can end in: a non-zero exit, or a stop the child or we ourselves forced. */
 const FAILED_STOP_REASONS = new Set(["error", "aborted", "timeout"]);
@@ -131,6 +151,40 @@ export function describeRunFailure(run: AgentRunResult): string {
 	const partial = getFinalOutput(run.messages).trim();
 	if (reason && partial) return `${reason}\n\nPartial output before termination:\n${partial}`;
 	return reason || partial || "(no output)";
+}
+
+/** A tool call in one line: its name, and its first non-empty string argument. */
+function describeToolCall(call: { name: string; arguments?: Record<string, unknown> }): string {
+	const arg = Object.values(call.arguments ?? {}).find((v) => typeof v === "string" && v.trim() !== "");
+	if (typeof arg !== "string") return call.name;
+	const oneLine = arg.replace(/\s+/g, " ").trim();
+	return `${call.name}(${oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine})`;
+}
+
+/**
+ * The tool calls the child had issued but not yet finished, described in one
+ * line each.
+ *
+ * This is the whole account of *what* a killed run was doing. The call that
+ * swallowed the budget is a `toolCall` part on the last assistant message, and
+ * it never produced a `toolResult` — so `getFinalOutput`, which reads text
+ * parts, reports the prose that preceded it ("now let me run the test suite")
+ * and nothing about the `bash` call that hung. Without this the caller cannot
+ * tell a deadlock from a task that merely needed longer, and retries the
+ * deadlock with a bigger budget.
+ */
+export function inFlightToolCalls(messages: Message[]): string[] {
+	const pending = new Map<string, string>();
+	for (const msg of messages) {
+		if (msg.role === "assistant") {
+			for (const part of msg.content) {
+				if (part.type === "toolCall") pending.set(part.id, describeToolCall(part));
+			}
+		} else if (msg.role === "toolResult") {
+			pending.delete(msg.toolCallId);
+		}
+	}
+	return [...pending.values()];
 }
 
 export function getFinalOutput(messages: Message[]): string {
@@ -223,11 +277,14 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 			options.timeoutSeconds && Number.isFinite(options.timeoutSeconds) && options.timeoutSeconds > 0
 				? options.timeoutSeconds * 1000
 				: undefined;
-		let termination: "aborted" | "timeout" | undefined;
+		const idleSeconds = options.idleSeconds ?? IDLE_SECONDS;
+		const idleMs = Number.isFinite(idleSeconds) && idleSeconds > 0 ? idleSeconds * 1000 : undefined;
+		let termination: "aborted" | "timeout" | "idle" | undefined;
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const proc = (options.spawnChild ?? spawnPi)(args, options.cwd);
 			let buffer = "";
+			let lastActivity = Date.now();
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -237,6 +294,12 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 				} catch {
 					return;
 				}
+
+				// Liveness is every event the child emits, not the two this result
+				// keeps. A high-effort turn streams nothing but `message_update`
+				// thinking deltas for minutes; a clock blind to them would kill the
+				// child precisely on the work it was delegated for.
+				lastActivity = Date.now();
 
 				if (event.type === "message_end" && event.message) {
 					const msg = event.message as Message;
@@ -279,8 +342,9 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 
 			let killTimer: NodeJS.Timeout | undefined;
 			let budgetTimer: NodeJS.Timeout | undefined;
+			let idleTimer: NodeJS.Timeout | undefined;
 
-			const terminate = (reason: "aborted" | "timeout") => {
+			const terminate = (reason: "aborted" | "timeout" | "idle") => {
 				termination ??= reason;
 				proc.kill("SIGTERM");
 				killTimer ??= setTimeout(() => {
@@ -296,6 +360,7 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 			const cleanup = () => {
 				if (killTimer) clearTimeout(killTimer);
 				if (budgetTimer) clearTimeout(budgetTimer);
+				if (idleTimer) clearTimeout(idleTimer);
 				options.signal?.removeEventListener("abort", onAbort);
 			};
 
@@ -312,6 +377,18 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 
 			if (timeoutMs !== undefined) budgetTimer = setTimeout(() => terminate("timeout"), timeoutMs);
 
+			// Re-arms for exactly the time left rather than polling: each firing
+			// either finds the child still silent and kills it, or discovers it
+			// spoke and waits out the remainder of its grace from that point.
+			if (idleMs !== undefined) {
+				const checkIdle = () => {
+					const remaining = idleMs - (Date.now() - lastActivity);
+					if (remaining <= 0) terminate("idle");
+					else idleTimer = setTimeout(checkIdle, remaining);
+				};
+				idleTimer = setTimeout(checkIdle, idleMs);
+			}
+
 			if (options.signal) {
 				if (options.signal.aborted) terminate("aborted");
 				else options.signal.addEventListener("abort", onAbort, { once: true });
@@ -324,9 +401,21 @@ export async function spawnAgentRun(options: AgentRunOptions): Promise<AgentRunR
 			// produced before it was killed — output, tool calls, usage, cost — is
 			// already on `result`, and for a chain or a parallel batch, throwing here
 			// would discard its siblings' completed results too.
-			result.stopReason = termination;
-			if (termination === "timeout") {
-				result.errorMessage = `Timed out after ${options.timeoutSeconds}s and was terminated.`;
+			// Both deadlines report as `timeout`: it is already in
+			// `FAILED_STOP_REASONS` and every rendering surface reads it, and what
+			// the caller needs in order to tell them apart is the message, not a
+			// second reason code.
+			result.stopReason = termination === "idle" ? "timeout" : termination;
+			// Only a deadline writes its own reason here. An abort leaves whatever
+			// the child last reported, which is the user's own doing and needs no
+			// account from us.
+			if (termination === "timeout" || termination === "idle") {
+				result.errorMessage =
+					termination === "timeout"
+						? `Timed out after ${options.timeoutSeconds}s and was terminated.`
+						: `Terminated after no output for ${idleSeconds}s.`;
+				const inFlight = inFlightToolCalls(result.messages);
+				if (inFlight.length > 0) result.errorMessage += ` In flight: ${inFlight.join(", ")}.`;
 			}
 			if (result.exitCode === 0) result.exitCode = 1;
 		}

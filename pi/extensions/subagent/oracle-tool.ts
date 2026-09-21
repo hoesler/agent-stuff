@@ -100,7 +100,7 @@ const PARAMS = Type.Object({
 		Type.Number({
 			minimum: 1,
 			description:
-				"Wall-clock budget for this question, in seconds. Omit to let it run unbounded. On expiry the oracle is terminated and whatever it produced so far is returned.",
+				"Optional hard ceiling on this question's wall clock, in seconds. Usually leave it off: an oracle that stops producing output is already terminated on its own. On expiry it is terminated and whatever it produced so far is returned.",
 		}),
 	),
 });
