@@ -19,15 +19,37 @@ Everything from here to [Oracle](#oracle) is about `subagent`.
 
 Exactly one mode must be provided per call.
 
-## Timeouts
+## Deadlines
 
-`timeoutSeconds` bounds a run's wall clock. It is set per task or per step, with a whole-call value as the fallback — the same precedence as `model`. There is deliberately no default: only the caller knows whether it asked for a one-file read or a module-wide refactor, and any number this extension picked would be wrong for one of them. Omitted, a run is unbounded, exactly as before.
+Two deadlines bound a run, and the one that ordinarily stops it is not the clock.
 
-On expiry the child gets `SIGTERM`, then `SIGKILL` five seconds later if it is still alive. The run is *not* discarded: it comes back with `stopReason: "timeout"`, an error message naming the budget, and everything the subagent produced before it was killed — output, tool calls, tokens, and cost. For a timeout that partial output is the main evidence for choosing a larger budget on the retry.
+**The idle deadline** is the real guard: `IDLE_SECONDS` (600) of *complete silence* from the child. It is not configurable from either tool's schema, on purpose. A wall-clock budget asks the caller to predict how long the work will take, which it cannot do — it has never run this task on this repo — so a low guess kills a subagent that was working, which is the failure this replaced. Silence is a fact about the run rather than a prediction about it, and it is what a deadlocked child actually produces: a child blocked on a lock emits nothing and costs nothing, while the runaway loop a clock would catch is the one still streaming.
+
+Liveness is measured on **every event the child emits**, not the two the result records. `--mode json` writes each session event to stdout, so a high-effort turn streams `message_update` thinking deltas for minutes on end; a clock that only watched `message_end` would kill the child precisely on the hard task it was delegated for. `run.test.ts` pins this with a child that streams nothing but thinking deltas.
+
+The default is sized against the longest legitimate silence, which turns out to be a tool call rather than anything the provider does. pi's bash tool emits a `tool_execution_update` only when the command writes output (throttled to 10/s), so the boundary is not slow-versus-deadlocked but **noisy versus silent**: a command that streams anything — a test runner, a build, an installer — keeps the child alive for hours, while one that prints nothing until it finishes is indistinguishable from a deadlock from out here. `tsc` is the everyday example, and `npm run typecheck` in this repo is exactly that shape. Nothing available at this seam can tell the two apart; only the command itself knows.
+
+So the number is chosen on an asymmetry rather than a measurement. Waiting out a deadlock costs only wall clock — a hung child issues no requests and burns no tokens — while killing a working command throws away the run. Erring high is nearly free. Provider-side silence sits well inside it, and a retry announces itself with `auto_retry_start`, so backoff is not silence at all.
+
+A refinement left undone: `tool_execution_start` and `tool_execution_end` bracket the silence that happens *inside* a tool call, so the two kinds of quiet could carry different thresholds — a stalled agent loop has no business being quiet for ten minutes. That needs state this does not keep, and one constant was the agreed starting point.
+
+**`timeoutSeconds` is a hard ceiling**, and optional. It is set per task or per step, with a whole-call value as the fallback — the same precedence as `model`. Most calls should omit it. It exists for the one case the idle deadline cannot reach: a child that streams steadily but never finishes, which unattended would run until the session ended. A parallel batch is where that bites, since one such task holds a concurrency slot and blocks the whole call.
+
+On either deadline the child gets `SIGTERM`, then `SIGKILL` five seconds later if it is still alive. The run is *not* discarded: it comes back with `stopReason: "timeout"` — both deadlines report as one reason, since every rendering surface already reads it and what distinguishes them is the message — and everything the subagent produced before it was killed.
+
+### What a killed run says it was doing
+
+The error message names the tool calls the child had issued but never finished:
+
+```
+Terminated after no output for 180s. In flight: bash(npm test).
+```
+
+Without that line the caller reads `getFinalOutput`, which returns *text* parts — so it gets the prose that preceded the hang ("now let me run the test suite") and nothing about the `bash` call that swallowed the budget. The call is on the last assistant message the whole time; it is a `toolCall` part, and it never produced a `toolResult`. `inFlightToolCalls` pairs calls against results and reports the survivors, which is what lets the caller tell a deadlock from a task that merely needed longer — the difference between fixing the test and retrying it with a bigger number.
 
 ## Termination and partial results
 
-A run killed from outside — by `timeoutSeconds`, or by the user aborting the turn — returns its partial result rather than throwing. That matters most in the modes that batch work: a chain aborted at step 3 still reports steps 1 and 2, and a parallel batch still reports the tasks that had already finished, including their cost. Throwing would discard all of it, along with the record of money already spent.
+A run killed from outside — by either deadline, or by the user aborting the turn — returns its partial result rather than throwing. That matters most in the modes that batch work: a chain aborted at step 3 still reports steps 1 and 2, and a parallel batch still reports the tasks that had already finished, including their cost. Throwing would discard all of it, along with the record of money already spent.
 
 Every timer and listener is scoped to one child process and released when it exits, so a chain that reuses a single abort signal across steps does not accumulate a listener per completed step.
 
@@ -183,7 +205,7 @@ The oracle is defined by *who answers*, not by what it is asked. It carries no s
 | Parameter | Meaning |
 | --- | --- |
 | `question` | The question, passed to the child verbatim. The oracle sees nothing of your conversation, so state the problem in full and name the files it should read. |
-| `timeoutSeconds` | Wall-clock budget. Omitted, the run is unbounded. On expiry the child is terminated and its partial output is returned. |
+| `timeoutSeconds` | Optional hard ceiling on wall clock. Usually omitted — the idle deadline stops a run that has gone silent. On expiry the child is terminated and its partial output is returned. |
 
 There is deliberately no `context` or `files` parameter: the oracle has read tools and the question can name paths, and a `context` parameter in particular invites dumping conversation history — the cost the separate context window exists to avoid. There is no `cwd` either: it was the only model-supplied input that changed the child's *prompt*, by selecting which `AGENTS.md` was appended, and dropping it costs no reach, since `read` applies no containment check and a question naming an absolute path still works. The tool list is fixed rather than configurable: read-only is part of what the oracle *is*.
 
@@ -291,7 +313,7 @@ The logic that does not need a running pi is split into pure modules with coloca
 
 The `globalThis` route key is itself a clean test seam: `routes.test.ts` sets `__piModelRouteResolvers` directly, with no mocking machinery.
 
-`run.test.ts` covers the one child-process seam both tools reach the child through — timeout, abort, the partial result each returns, the dispatch arguments, and which of `--system-prompt` / `--append-system-prompt` a run gets. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated. It also covers `displayedFailureReason`, which exists as a named function mainly so the rule every rendered surface follows can be asserted: the renderers build pi TUI widgets and are not otherwise reachable from a test.
+`run.test.ts` covers the one child-process seam both tools reach the child through — both deadlines, abort, the in-flight diagnostics, the partial result each returns, the dispatch arguments, and which of `--system-prompt` / `--append-system-prompt` a run gets. Every test that expects a child to be killed carries its own `timeout`, so a deadline that fails to fire fails the suite instead of hanging it. It injects `spawnChild`, so those paths run against real child processes, real signals, and real timers without needing a pi to be installed or authenticated. It also covers `displayedFailureReason`, which exists as a named function mainly so the rule every rendered surface follows can be asserted: the renderers build pi TUI widgets and are not otherwise reachable from a test.
 
 `subagent-tool.test.ts` and `oracle-tool.test.ts` cover the composition each tool adds on top: persona lookup and the `Task:` framing for one, and for the other the load-bearing invariants that make the oracle what it is — the fixed read-only tool list, the posture prompt sent as replacing, `--no-skills`, the question passed through verbatim, no `cwd` parameter, and a missing route failing without attempting a run. The oracle's test injects `runAgent` at the same seam where the subagent's injects `spawnChild`.
 

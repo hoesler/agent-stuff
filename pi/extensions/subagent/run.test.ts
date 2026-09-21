@@ -259,3 +259,134 @@ describe("displayedFailureReason", () => {
 		assert.equal(displayedFailureReason(running), "");
 	});
 });
+
+/**
+ * A wall-clock budget is a guess the caller has no way to calibrate: it cannot
+ * know whether the delegated work is a one-file read or a module-wide
+ * refactor, so a low guess kills a run that was working. Silence is a fact
+ * about the run rather than a prediction about it, and it is what a deadlocked
+ * child actually produces.
+ *
+ * Every test that expects a child to be killed carries its own `timeout`: a
+ * deadline that fails to fire would otherwise hang the suite instead of
+ * failing it.
+ */
+describe("idle deadline", () => {
+	/** Emits `event` every 50ms, forever, so the child is alive but never finishes. */
+	const chattyChild = (event: unknown): SpawnChild => () =>
+		spawn(process.execPath, ["-e", `setInterval(() => console.log(${JSON.stringify(JSON.stringify(event))}), 50);`], {
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+	const thinkingDelta = {
+		type: "message_update",
+		assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "..." },
+	};
+
+	test("terminates a child that has gone silent", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: hangingChild, idleSeconds: 0.3 });
+
+		assert.equal(result.stopReason, "timeout");
+		assert.match(result.errorMessage ?? "", /no output for 0\.3s/);
+		assert.notEqual(result.exitCode, 0);
+	});
+
+	test("keeps what the child produced before it went silent", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: hangingChild, idleSeconds: 0.3 });
+
+		assert.equal(result.messages.length, 1);
+		assert.equal(result.usage.turns, 1);
+	});
+
+	// The reason this is measured on every parsed event rather than on the two
+	// the result records: a high-effort turn streams nothing but thinking
+	// deltas, and an idle timer blind to them would kill the child precisely on
+	// the hard task it was delegated.
+	test("a child streaming only thinking deltas is not silent", { timeout: 5000 }, async () => {
+		const controller = new AbortController();
+		const pending = run({ spawnChild: chattyChild(thinkingDelta), idleSeconds: 0.3, signal: controller.signal });
+		await new Promise((resolve) => setTimeout(resolve, 900));
+		controller.abort();
+
+		const result = await pending;
+
+		assert.equal(result.stopReason, "aborted");
+	});
+
+	test("a run that finishes before going idle is untouched", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: quickChild, idleSeconds: 30 });
+
+		assert.equal(result.stopReason, undefined);
+		assert.equal(result.exitCode, 0);
+	});
+
+	test("a non-positive threshold is ignored rather than killing the run on the spot", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: quickChild, idleSeconds: 0 });
+
+		assert.equal(result.stopReason, undefined);
+		assert.equal(result.exitCode, 0);
+	});
+
+	// The wall clock is demoted to a ceiling, not deleted: a child that streams
+	// steadily forever never goes idle, and unattended it would run until the
+	// session ended.
+	test("the wall-clock ceiling still stops a child that never goes idle", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: chattyChild(thinkingDelta), idleSeconds: 30, timeoutSeconds: 0.4 });
+
+		assert.equal(result.stopReason, "timeout");
+		assert.match(result.errorMessage ?? "", /Timed out after 0\.4s/);
+	});
+});
+
+/**
+ * What the calling agent is told about a termination. Without this it reads the
+ * child's last prose — "now let me run the test suite" — and learns nothing
+ * about the `bash` call that swallowed the remaining budget, so it cannot tell
+ * a deadlock from a task that merely needed longer.
+ */
+describe("in-flight diagnostics", () => {
+	const assistantWithCall = {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{ type: "text", text: "Now let me run the test suite." },
+				{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "npm test" } },
+			],
+			provider: "stub",
+			model: "stub-model",
+		},
+	};
+
+	/** Emits each event as its own line, then hangs until it is killed. */
+	const emitting = (...events: unknown[]): SpawnChild => {
+		const lines = events.map((e) => `console.log(${JSON.stringify(JSON.stringify(e))});`).join("");
+		return () =>
+			spawn(process.execPath, ["-e", `${lines} setInterval(() => {}, 1000);`], {
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+	};
+
+	test("names the tool call that was still running when the child was killed", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: emitting(assistantWithCall), idleSeconds: 0.3 });
+
+		assert.match(result.errorMessage ?? "", /In flight: bash\(npm test\)/);
+	});
+
+	test("says nothing about tool calls when the child was between turns", { timeout: 5000 }, async () => {
+		const result = await run({ spawnChild: hangingChild, idleSeconds: 0.3 });
+
+		assert.doesNotMatch(result.errorMessage ?? "", /In flight/);
+	});
+
+	test("a call whose result arrived is not reported as in flight", { timeout: 5000 }, async () => {
+		const answered = {
+			type: "tool_result_end",
+			message: { role: "toolResult", toolCallId: "call-1", toolName: "bash", content: [], isError: false },
+		};
+
+		const result = await run({ spawnChild: emitting(assistantWithCall, answered), idleSeconds: 0.3 });
+
+		assert.doesNotMatch(result.errorMessage ?? "", /In flight/);
+	});
+});

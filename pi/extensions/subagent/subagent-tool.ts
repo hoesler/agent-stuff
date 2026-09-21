@@ -269,7 +269,7 @@ function buildSubagentParams(agents: AgentConfig[]): TSchema {
 			Type.Number({
 				minimum: 1,
 				description:
-					"Wall-clock budget for this task, in seconds. Size it to the work you are delegating; omit it to let the task run unbounded. On expiry the subagent is terminated and whatever it produced so far is returned.",
+					"Optional hard ceiling on this task's wall clock, in seconds. Usually leave it off: a subagent that stops producing output is already terminated on its own, and a budget guessed too low kills work that was in progress. Set it only to cap a task you want bounded whatever it does.",
 			}),
 		),
 	});
@@ -287,7 +287,7 @@ function buildSubagentParams(agents: AgentConfig[]): TSchema {
 			Type.Number({
 				minimum: 1,
 				description:
-					"Wall-clock budget for this step, in seconds. Size it to the work you are delegating; omit it to let the step run unbounded. On expiry the subagent is terminated, whatever it produced so far is returned, and the chain stops.",
+					"Optional hard ceiling on this step's wall clock, in seconds. Usually leave it off: a subagent that stops producing output is already terminated on its own. On expiry the step is terminated, whatever it produced so far is returned, and the chain stops.",
 			}),
 		),
 	});
@@ -306,7 +306,7 @@ function buildSubagentParams(agents: AgentConfig[]): TSchema {
 			Type.Number({
 				minimum: 1,
 				description:
-					"Wall-clock budget applied to every task in this call, in seconds. A per-task or per-step timeoutSeconds takes precedence. Omit to leave runs unbounded — there is no default, since only you know how long the delegated work should take.",
+					"Optional hard ceiling applied to every task in this call, in seconds. A per-task or per-step timeoutSeconds takes precedence. Usually leave it off: a subagent that stops producing output is already terminated on its own.",
 			}),
 		),
 		cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
