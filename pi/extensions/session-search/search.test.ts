@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { openIndex } from "./db.ts";
 import { type FixtureSession, writeSession } from "./fixtures.ts";
 import { refreshIndex } from "./ingest.ts";
-import { parseWhen, readEntries, resolveSession, searchIndex } from "./search.ts";
+import { findSession, parseWhen, readEntries, searchIndex } from "./search.ts";
 
 const OPTIONS = { maxSnippetChars: 240 };
 
@@ -192,7 +192,8 @@ test("a roots scope spans several worktrees at once", () => {
 
 test("a paths scope selects exactly the named session files", () => {
   const db = indexed([PARENT, OTHER]);
-  const parentPath = resolveSession(db, "aaa")!;
+  const found = findSession(db, "aaa");
+  const parentPath = found.kind === "found" ? found.path : "";
   const scoped = searchIndex(db, { query: "ripgrep", scope: { kind: "paths", paths: [parentPath] }, limit: 10 }, OPTIONS);
   assert.deepEqual(
     scoped.map((result) => result.sessionId),
@@ -268,12 +269,14 @@ test("parseWhen accepts ISO dates and relative shorthand", () => {
   assert.equal(parseWhen("garbage", now), undefined);
 });
 
-test("resolveSession accepts an id, an id prefix, or a path; readEntries returns dialogue in order", () => {
+test("findSession accepts an id, an id prefix, or a path; readEntries returns dialogue in order", () => {
   const db = indexed([PARENT]);
-  const path = resolveSession(db, "aaa")!;
-  assert.equal(resolveSession(db, path), path);
-  assert.equal(resolveSession(db, "aa"), path);
-  assert.equal(resolveSession(db, "zzz"), undefined);
+  const found = findSession(db, "aaa");
+  assert.equal(found.kind, "found");
+  const path = found.kind === "found" ? found.path : "";
+  assert.deepEqual(findSession(db, path), { kind: "found", path });
+  assert.deepEqual(findSession(db, "aa"), { kind: "found", path });
+  assert.deepEqual(findSession(db, "zzz"), { kind: "none" });
 
   const around = readEntries(db, { path, mode: "around", entryId: "e2", radius: 1 });
   assert.deepEqual(
@@ -295,4 +298,26 @@ test("resolveSession accepts an id, an id prefix, or a path; readEntries returns
   assert.deepEqual(last[1].evidence, [
     { tool: "bash", action: "run", target: "npm run migrate -- --latest" },
   ]);
+});
+
+test("findSession reports an ambiguous prefix with its candidates, and takes LIKE wildcards literally", () => {
+  const db = indexed([PARENT, FORK, OTHER]);
+  // Every candidate, newest first, with what tells them apart.
+  const ambiguous = findSession(db, "");
+  assert.equal(ambiguous.kind, "ambiguous");
+  if (ambiguous.kind !== "ambiguous") return;
+  assert.equal(ambiguous.total, 3);
+  assert.deepEqual(
+    ambiguous.candidates.map((candidate) => [candidate.sessionId, candidate.cwd]),
+    [
+      ["ccc", "/other/proj"],
+      ["bbb", "/work/repo"],
+      ["aaa", "/work/repo"],
+    ],
+  );
+  assert.equal(ambiguous.candidates[0].name, "Ripgrep versus sqlite");
+
+  // `_` and `%` are id characters here, not patterns.
+  assert.deepEqual(findSession(db, "a_a"), { kind: "none" });
+  assert.deepEqual(findSession(db, "%"), { kind: "none" });
 });

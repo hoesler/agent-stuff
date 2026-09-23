@@ -6,8 +6,9 @@ import type { SearchResult } from "./search.ts";
 const NOW = new Date("2026-08-13T12:00:00.000Z");
 
 const RESULT: SearchResult = {
-  sessionId: "8f2a1c3d4e5f",
-  path: "/sessions/--work-repo--/8f2a1c.jsonl",
+  // A UUIDv7, as pi writes them: the leading hex is a millisecond timestamp.
+  sessionId: "01a0cf09-c535-7458-8964-1708066115d0",
+  path: "/sessions/--work-repo--/01a0cf09.jsonl",
   cwd: "/Users/me/Develop/private/agent-stuff",
   name: "Ripgrep vs SQLite for session search",
   entryId: "e7f3a2b1",
@@ -32,7 +33,9 @@ test("a result carries a name, a cwd, an openable id, and the branch story", () 
   assert.match(text, /1\. "Ripgrep vs SQLite for session search"/);
   assert.match(text, /~\/Develop\/private\/agent-stuff/);
   assert.match(text, /2026-07-14 \(4 weeks ago\)/);
-  assert.match(text, /session 8f2a1c/);
+  // In full: a UUIDv7 prefix is a timestamp, shared by every session from the
+  // same few hours, so no shortening of it can be handed back to session_read.
+  assert.match(text, /session 01a0cf09-c535-7458-8964-1708066115d0 /);
   assert.match(text, /entry e7f3a2b1/);
   assert.match(text, /side branch, diverged 07-14, ran 40 more entries/);
   assert.match(text, /also in 2 forks/);

@@ -55,7 +55,7 @@ function harness() {
   const sessions = join(root, "sessions");
   writeSession(sessions, {
     path: "--work-repo--/a.jsonl",
-    id: "8f2a1c",
+    id: "01a0cf09-c535-7458-8964-1708066115d0",
     cwd: "/work/repo",
     created: "2026-07-14T09:00:00.000Z",
     entries: [
@@ -112,6 +112,7 @@ function harness() {
   );
 
   return {
+    sessions,
     tools,
     commands,
     handlers,
@@ -129,7 +130,7 @@ test("session_search finds a hit and session_read expands it", async () => {
   const found = await tools.get("session_search").execute("c1", { query: "ripgrep" }, undefined, undefined, ctx);
   const text = found.content[0].text as string;
   assert.match(text, /Ripgrep vs SQLite/);
-  assert.match(text, /session 8f2a1c/);
+  assert.match(text, /session 01a0cf09-c535-7458-8964-1708066115d0/);
   assert.match(text, /entry e1/);
   // The session name and the message both match; the name is ranked first.
   assert.equal(found.details.count, 2);
@@ -142,7 +143,7 @@ test("session_search finds a hit and session_read expands it", async () => {
 
   const read = await tools
     .get("session_read")
-    .execute("c3", { session: "8f2a1c", entry: "e1", around: 2, include_tools: true }, undefined, undefined, ctx);
+    .execute("c3", { session: "01a0cf09-c535-7458-8964-1708066115d0", entry: "e1", around: 2, include_tools: true }, undefined, undefined, ctx);
   const transcript = read.content[0].text as string;
   assert.match(transcript, /user: convinced that ripgrep/);
   assert.match(transcript, /write \/work\/repo\/src\/auth\.ts/);
@@ -214,6 +215,29 @@ test("a malformed query and an unknown session are thrown, not returned as resul
     tools.get("session_read").execute("c3", { session: "nope" }, undefined, undefined, ctx),
     /No indexed session matches/,
   );
+});
+
+test("an ambiguous session prefix names its candidates instead of claiming no match", async () => {
+  const { sessions, tools, ctx } = harness();
+  // Started an hour after the harness session: the same leading UUIDv7 hex.
+  writeSession(sessions, {
+    path: "--work-repo--/b.jsonl",
+    id: "01a0cf2b-7e10-7a3c-9d41-5b2e6f0c8a17",
+    cwd: "/work/repo",
+    created: "2026-07-14T10:00:00.000Z",
+    entries: [{ id: "b1", parentId: null, role: "user", text: "a second session" }],
+  });
+  const read = (session: string) =>
+    tools.get("session_read").execute("c1", { session }, undefined, undefined, ctx);
+
+  await assert.rejects(read("01a0cf"), (error: Error) => {
+    assert.match(error.message, /"01a0cf" matches 2 sessions/);
+    assert.match(error.message, /01a0cf09-c535-7458-8964-1708066115d0 .*\/work\/repo/);
+    assert.match(error.message, /01a0cf2b-7e10-7a3c-9d41-5b2e6f0c8a17/);
+    return true;
+  });
+  const found = await read("01a0cf2b");
+  assert.match(found.details.path, /b\.jsonl$/);
 });
 
 test("/session-index reports status and --rebuild reindexes", async () => {

@@ -23,8 +23,8 @@ import { Type } from "typebox";
 import { SessionSearchConfigLoader, resolveConfigPaths } from "./config.ts";
 import { getMeta, openIndex, resetIndex } from "./db.ts";
 import { type RefreshStats, refreshIndex } from "./ingest.ts";
-import { renderResults, renderTranscript } from "./render.ts";
-import { type SearchParams, loadFileNodes, readEntries, resolveSession, searchIndex } from "./search.ts";
+import { renderAmbiguous, renderResults, renderTranscript } from "./render.ts";
+import { type SearchParams, findSession, loadFileNodes, readEntries, searchIndex } from "./search.ts";
 import { gitWorktrees, resolveScope } from "./scope.ts";
 import type { ConfigSnapshot, SessionSearchConfig } from "./types.ts";
 
@@ -339,13 +339,17 @@ export default function sessionSearchExtension(pi: ExtensionAPI): void {
       };
 
       return withIndex(ctx, (index) => {
-        const path = resolveSession(index, request.session);
-        if (!path) {
+        const match = findSession(index, request.session);
+        if (match.kind === "ambiguous") {
+          throw new Error(renderAmbiguous(request.session, match.total, match.candidates, homedir()));
+        }
+        if (match.kind === "none") {
           throw new Error(
             `No indexed session matches "${request.session}". ` +
               "Use the session id from session_search, or run /session-index if it may be unindexed.",
           );
         }
+        const { path } = match;
 
         const entries = request.entry
           ? readEntries(index, {

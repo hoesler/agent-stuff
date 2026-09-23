@@ -6,7 +6,7 @@
  * by hand and a snippet the calling agent can decide from — nothing more.
  */
 
-import type { SearchResult } from "./search.ts";
+import type { SearchResult, SessionCandidate } from "./search.ts";
 import type { TranscriptEntry } from "./search.ts";
 
 export interface RenderOptions {
@@ -19,10 +19,6 @@ export interface TranscriptOptions {
   includeTools: boolean;
   maxChars: number;
   offset: number;
-}
-
-export function shortId(id: string): string {
-  return id.length > 6 ? id.slice(0, 6) : id;
 }
 
 function abbreviate(path: string | undefined, home: string): string {
@@ -91,7 +87,7 @@ export function renderResults(results: readonly SearchResult[], options: RenderO
       ? `${dayOf(result.ts)} (${relativeTime(result.ts, options.now)})`
       : "(undated)";
     lines.push(
-      `   ${when} · session ${shortId(result.sessionId)} · entry ${result.entryId}`,
+      `   ${when} · session ${result.sessionId} · entry ${result.entryId}`,
     );
     const branch = branchLine(result);
     if (branch) lines.push(`   ${branch}`);
@@ -108,6 +104,27 @@ export function renderResults(results: readonly SearchResult[], options: RenderO
   }
 
   return lines.join("\n").trimEnd();
+}
+
+/**
+ * The error for a prefix that matches several sessions: each candidate in full,
+ * with what tells them apart, so the next call can name one.
+ */
+export function renderAmbiguous(
+  prefix: string,
+  total: number,
+  candidates: readonly SessionCandidate[],
+  home: string,
+): string {
+  const lines = [`"${prefix}" matches ${total} sessions; give one of these ids in full:`];
+  for (const candidate of candidates) {
+    lines.push(
+      `- ${candidate.sessionId}   ${abbreviate(candidate.cwd, home)}   ` +
+        `${dayOf(candidate.lastActivity)}   "${candidate.name ?? "(unnamed)"}"`,
+    );
+  }
+  if (total > candidates.length) lines.push(`… and ${total - candidates.length} more.`);
+  return lines.join("\n");
 }
 
 function speaker(entry: TranscriptEntry): string {
