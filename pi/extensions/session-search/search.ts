@@ -297,21 +297,70 @@ export function searchIndex(
 }
 
 /** Resolve an exact path, an exact session id, or a unique id prefix. */
-export function resolveSession(db: DatabaseSync, idOrPath: string): string | undefined {
+export interface SessionCandidate {
+  sessionId: string;
+  path: string;
+  cwd: string | undefined;
+  name: string | undefined;
+  lastActivity: string | undefined;
+}
+
+export type SessionMatch =
+  | { kind: "found"; path: string }
+  | { kind: "none" }
+  | { kind: "ambiguous"; total: number; candidates: SessionCandidate[] };
+
+/** How many candidates an ambiguous prefix lists; the total is always given. */
+const CANDIDATE_CAP = 10;
+
+/**
+ * Resolve a session from a path, an id, or an id prefix.
+ *
+ * An ambiguous prefix is its own outcome rather than "no match", and it comes
+ * back with the candidates. pi's ids are UUIDv7, whose leading hex is a
+ * millisecond timestamp: six characters of one are shared by every session
+ * started in the same four-hour window, so ambiguity is the common case for a
+ * short prefix, and the caller needs the full ids to recover from it.
+ */
+export function findSession(db: DatabaseSync, idOrPath: string): SessionMatch {
   const exactPath = db.prepare("SELECT path FROM files WHERE path = ?").get(idOrPath) as
     | { path: string }
     | undefined;
-  if (exactPath) return exactPath.path;
+  if (exactPath) return { kind: "found", path: exactPath.path };
 
   const exactId = db.prepare("SELECT path FROM files WHERE session_id = ?").get(idOrPath) as
     | { path: string }
     | undefined;
-  if (exactId) return exactId.path;
+  if (exactId) return { kind: "found", path: exactId.path };
 
-  const prefixed = db
-    .prepare("SELECT path FROM files WHERE session_id LIKE ? || '%' LIMIT 2")
-    .all(idOrPath) as any[];
-  return prefixed.length === 1 ? (prefixed[0].path as string) : undefined;
+  // substr rather than LIKE: `_` is a legal id character, not a wildcard.
+  const prefixed = "substr(session_id, 1, length(:prefix)) = :prefix";
+  const total = Number(
+    (db.prepare(`SELECT count(*) AS n FROM files WHERE ${prefixed}`).get({ prefix: idOrPath }) as {
+      n: number;
+    }).n,
+  );
+  if (total === 0) return { kind: "none" };
+
+  const rows = db
+    .prepare(
+      `SELECT path, session_id, cwd, last_activity FROM files WHERE ${prefixed} ` +
+        "ORDER BY COALESCE(last_activity, created) DESC LIMIT :cap",
+    )
+    .all({ prefix: idOrPath, cap: CANDIDATE_CAP }) as any[];
+  if (total === 1) return { kind: "found", path: rows[0].path as string };
+
+  return {
+    kind: "ambiguous",
+    total,
+    candidates: rows.map((row) => ({
+      sessionId: row.session_id as string,
+      path: row.path as string,
+      cwd: row.cwd ?? undefined,
+      name: sessionName(db, row.path as string),
+      lastActivity: row.last_activity ?? undefined,
+    })),
+  };
 }
 
 export interface TranscriptEntry {

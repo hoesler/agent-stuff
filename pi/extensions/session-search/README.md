@@ -85,10 +85,14 @@ A result is deliberately terse:
 
 ```
 1. "Ripgrep vs SQLite for session search"   ~/Develop/private/agent-stuff
-   2026-07-14 (4 weeks ago) · session 8f2a1c · entry e7f3a2b1
+   2026-07-14 (4 weeks ago) · session 01a0cf09-c535-7458-8964-1708066115d0 · entry e7f3a2b1
    side branch, diverged 07-14, ran 40 more entries · also in 2 forks
    …convinced that ripgrep might be problematic because of JSON…
 ```
+
+The session id is printed in full. pi's ids are UUIDv7, whose leading hex is a
+millisecond timestamp, so any short form of one is shared by every session
+started within hours of it — a shortened id would look openable and not be.
 
 Worked examples:
 
@@ -145,7 +149,8 @@ every session that never searches. `/tools` shows it appear.
 A pin from `/tools` stands: the tool is deferred once at session start and never
 deactivated again.
 
-- `session` — id, unambiguous id prefix, or file path
+- `session` — id, unambiguous id prefix, or file path; an ambiguous prefix is
+  refused with the matching ids listed in full, not reported as no match
 - one of `entry` plus `around` (default 10 surrounding entries), `branch` with a
   leaf id for that whole path, or `last` for the final N entries
 - `include_tools` (default off) adds tool names and targets, never their
