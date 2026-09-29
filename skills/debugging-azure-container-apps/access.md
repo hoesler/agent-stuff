@@ -35,18 +35,28 @@ az_resolve
 
 **`NONO_PROXY_TOKEN` is still not on the allowlist**, but the old reason for that was wrong. It is not "a handle Azure rejects": where a route has loaded it is byte-identical to `$AZURE_BEARER_TOKEN`, so sending it changes nothing. Where no route has loaded, there is nothing to swap it for and the proxy forwards it to Azure, which answers `401 InvalidTokenError` — that is where the old observation came from. Either way, reaching for it is never the fix. Never `grep` the environment for "token" and treat a hit as an Azure credential; the allowlist above is the only thing that counts.
 
-**An empty credential variable means something specific.** nono exports a route's phantom only once that route's real credential has loaded (`server.rs:630`). So in a nono session, empty `$AZURE_BEARER_TOKEN` = the upstream secret failed to load at proxy start, usually expired — *not* "the profile injects no Azure credential". Refresh the secret named by the route's `credential_key` and restart the nono session:
+**An empty credential variable means something specific.** nono exports a route's phantom only once that route has loaded (`server.rs:630`), and what "loaded" means depends on the route's `credential_key`:
 
 ```bash
 az_nono_route
 ```
 
 ```
+profile:         <profile>.json
 route:           azure_arm -> https://management.azure.com
   env_var:       AZURE_BEARER_TOKEN   (holds the phantom, never a secret)
   inject_mode:   header
-  credential_key: env://AZURE_ACCESS_TOKEN   <- refresh THIS when the env_var is empty
+  credential_key: cmd://azure_arm
+  captured by:   az account get-access-token --resource https://management.azure.com --query accessToken --output tsv
+                 (on the host, on first use; a failed capture answers 503 - fix the host login, no restart)
 ```
+
+- **`cmd://…`** loads at proxy start without fetching anything; the command runs on the host at the first matching request. Empty `$AZURE_BEARER_TOKEN` means the route is **not active** in this session — the profile that defines it (directly or via `--extends`) was not part of this session, or the route is missing from the final `network.credentials` list.
+- **Any other key** (`op://`, `env://`, keystore) reads its secret at proxy start. Empty means that secret failed to load, usually expired.
+
+Either way the fix is outside the sandbox: report it to the user.
+
+**A failed `cmd://` capture answers 503.** When the host command fails — typically an expired host-side login such as `az login` — the proxy returns `503 {"error":"Service Unavailable"}` without forwarding, and `az__report` labels it `CaptureFailed`. Failures are not cached: after the user fixes the host login, the next request re-runs the command and succeeds in the same session. No restart.
 
 If `az_resolve` prints `STOP: no Azure credential in this session` outside a nono session, that is the final answer. Do not run `az`, do not start a device-code flow, do not probe endpoints.
 
@@ -175,7 +185,7 @@ Identifier:  customerId GUID
 Path:        /v1/workspaces/{customerId}/query
 ```
 
-Mode B needs its own audience. In a sandbox the injected credential is usually ARM-audience only, so Mode B returns `InvalidTokenError` / `SignatureVerificationFailed` no matter what you do to the URL. **Use Mode A unless the profile shows a distinct Log Analytics credential.**
+Mode B needs its own audience. **Use Mode A unless `az_nono_route` shows a Log Analytics route with its own credential** — for a `cmd://` route, a capture command with `--resource https://api.loganalytics.io`. The phantom in `$AZURE_BEARER_TOKEN` is the same for both routes; the proxy picks the upstream credential by base URL. Without a distinct LA credential, Mode B returns `InvalidTokenError` / `SignatureVerificationFailed` no matter what you do to the URL.
 
 Components are not interchangeable. An ARM resource path appended to a data-plane base URL, or a `customerId` in an ARM path, is always wrong — no api-version, header, or `listKeys` call rescues it.
 
@@ -186,7 +196,8 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 | Error | Interpretation | Next action |
 |---|---|---|
 | `InvalidTokenError`, `SignatureVerificationFailed`, `InvalidAuthenticationToken` | Wrong audience for the endpoint, or a proxy token sent as an Azure token | Return to `az_resolve` and use Mode A. Do not change KQL, api-version, or headers |
-| `401` from `api.loganalytics.io` | ARM token used against the data plane, or expired token | Switch to Mode A. In nono the LA route usually shares the ARM route's `credential_key` (`az_nono_route`), so there is no second credential to try — Mode A is the only path |
+| `401` from `api.loganalytics.io` | ARM token used against the data plane, or expired token | Switch to Mode A. Check `az_nono_route` first: if the LA route shares the ARM route's credential, there is no second credential to try and Mode A is the only path |
+| `503 {"error":"Service Unavailable"}` in nono (`CaptureFailed`) | A `cmd://` route's host command failed, usually an expired host-side login (e.g. `az login`) | Ask the user to fix the host login (`az_nono_route` shows the command), then retry. No restart |
 | `AuthorizationFailed`, RBAC `403` | Token is valid, principal lacks the role | Report the missing role and scope. Stop |
 | Proxy `Forbidden` / no HTTP response | Route or endpoint rule does not permit this path | Read the profile's `endpoint_rules` (Step 1) and report the required route |
 | `ResourceNotFound` on a workspace path | `customerId` GUID used where `workspaceResourceName` belongs | Re-run `az_workspaces`; use the resource name |

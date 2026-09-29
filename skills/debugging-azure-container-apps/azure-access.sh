@@ -56,6 +56,16 @@ try:
         for inner in (e.get("innererror"), e.get("details")):
             if inner:
                 msg += " || " + json.dumps(inner)
+    elif isinstance(e, str) and e and status == "503" and sandbox:
+        # A cmd:// route captures its credential on the host on first use. When that
+        # command fails (e.g. an expired host login) the proxy answers 503 {"error":"Service
+        # Unavailable"} instead of forwarding. Failures are not cached: the next
+        # request re-runs the command.
+        code, msg = "CaptureFailed", e
+        hint = ("the nono proxy could not capture the credential on the host - usually an "
+                "expired host-side login (e.g. az login). The request never reached Azure. Run az_nono_route to see the "
+                "capture command, ask the user to fix the host login, then retry: no restart "
+                "needed. Do not touch the phantom or the URL")
     elif isinstance(e, str) and e:
         # Every Azure error is an object with a code. A bare {"error": "<string>"}
         # is an intermediary answering - in nono, the proxy rejecting the phantom
@@ -100,9 +110,31 @@ az_nono_route() {
   local out
   out=$(python3 - <<'NONOPY'
 import json, os, re, glob, sys
+def jsonc(s):
+    # Profiles may carry /* */ and // comments. Strip them outside strings only:
+    # paths such as "/**" and "workspaces/*/api" look like comment markers.
+    out, i, n, q = [], 0, len(s), False
+    while i < n:
+        c = s[i]
+        if q:
+            out.append(c)
+            if c == "\\": out.append(s[i + 1:i + 2]); i += 1
+            elif c == '"': q = False
+        elif c == '"': q = True; out.append(c)
+        elif s.startswith("/*", i):
+            end = s.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        elif s.startswith("//", i):
+            end = s.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        else: out.append(c)
+        i += 1
+    return "".join(out)
 found = False
 for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
-    txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
+    txt = re.sub(r",(\s*[}\]])", r"\1", jsonc(open(f).read()))   # profiles may carry trailing commas
     try:
         p = json.loads(txt)
     except Exception as e:
@@ -112,10 +144,18 @@ for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json")))
         if not any(h in up for h in ("management.azure.com", "loganalytics.io")):
             continue
         found = True
+        print("profile:         %s" % os.path.basename(f))
         print("route:           %s -> %s" % (name, up))
         print("  env_var:       %s   (holds the phantom, never a secret)" % c.get("env_var"))
         print("  inject_mode:   %s" % (c.get("inject_mode") or "header (default)"))
-        print("  credential_key: %s   <- refresh THIS when the env_var is empty" % c.get("credential_key"))
+        key = c.get("credential_key") or ""
+        print("  credential_key: %s" % key)
+        if key.startswith("cmd://"):
+            cap = (p.get("credential_capture") or {}).get(key[6:]) or {}
+            print("  captured by:   %s" % " ".join(cap.get("command") or ["<no credential_capture entry>"]))
+            print("                 (on the host, on first use; a failed capture answers 503 - fix the host login, no restart)")
+        else:
+            print("                  ^ refresh THIS and restart the session when the env_var is empty")
 sys.exit(0 if found else 1)
 NONOPY
 )
@@ -154,17 +194,21 @@ az_resolve() {
     echo "  Checked: $AZ_CRED_VARS"
     if [ "$AZ_SANDBOX" = yes ] && [ -n "${NONO_PROXY_TOKEN:-}" ]; then
       echo
-      echo "  In a nono session an empty credential variable is a specific, fixable state,"
-      echo "  not an absent route. nono exports a route phantom token only once that route"
-      echo "  real credential has loaded (server.rs:630), so empty means the upstream secret"
-      echo "  failed to load at proxy start. Usually it expired."
+      echo "  In a nono session an empty credential variable is a specific, fixable state."
+      echo "  nono exports a route phantom token only once that route has loaded"
+      echo "  (server.rs:630). What that means depends on the route credential_key:"
+      echo "    cmd://  loads at start without fetching anything, so empty means the route"
+      echo "            is not active in this session - the profile layer defining it was"
+      echo "            not composed in, or the route is not in network.credentials."
+      echo "    other   the upstream secret failed to load at proxy start. Usually expired."
       echo
       echo "  Do NOT substitute \$NONO_PROXY_TOKEN by hand. With no loaded route there is"
       echo "  nothing to swap it for: the proxy forwards it and Azure rejects it with"
       echo "  401 InvalidTokenError, which reads like a dead token and is not one."
       echo
-      echo "  Fix: refresh the secret named by the route credential_key, then restart the"
-      echo "  nono session so the proxy reloads it. 'az_nono_route' names that secret."
+      echo "  Fix: run 'az_nono_route' to see the route, then report to the user - the"
+      echo "  session has to be restarted with the route active (cmd://) or with the secret"
+      echo "  refreshed (other keys). Neither is fixable from inside the sandbox."
     elif [ "$AZ_SANDBOX" = yes ]; then
       echo "  This nono profile injects no Azure credential. Report to the user; do not run 'az'."
     fi
@@ -183,9 +227,9 @@ az_resolve() {
   [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] &&
     echo "LA base:     ${AZURE_LOG_ANALYTICS_BASE_URL%/} (data plane; needs an LA-audience credential)"
   [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] && [ "$AZ_SANDBOX" = yes ] &&
-    echo "             in nono the LA route usually shares the ARM route credential_key, so there is"
+    echo "             in nono the phantom is shared; only a distinct LA route credential makes Mode B"
   [ -n "${AZURE_LOG_ANALYTICS_BASE_URL:-}" ] && [ "$AZ_SANDBOX" = yes ] &&
-    echo "             no second variable to reach for - check with az_nono_route, then use Mode A."
+    echo "             work - check with az_nono_route, otherwise use Mode A."
 
   # ARM probe = Resource Graph. Do NOT probe with GET /subscriptions: sandbox
   # profiles routinely allow Resource Graph and per-resource-group reads while
