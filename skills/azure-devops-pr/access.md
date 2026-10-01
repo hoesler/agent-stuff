@@ -106,28 +106,36 @@ The proxy answers a failed validation with **401 and the body `{"error":"Unautho
 
 #### An empty credential variable means something specific
 
-nono exports a route's phantom **only once that route's real credential has loaded** (`server.rs:630`). So in a nono session with a configured `dev.azure.com` route:
-
-> **empty `$AZURE_DEVOPS_EXT_PAT` = the upstream secret failed to load at proxy start.**
-
-It does *not* mean "no route" and it does *not* mean "the proxy will supply the credential". Usually the secret behind the route's `credential_key` expired.
-
-Do **not** substitute `$NONO_PROXY_TOKEN` by hand here. With no loaded route there is nothing to swap it for; the proxy forwards it and Azure DevOps answers with a sign-in page — a failure that reads like a dead PAT and is not one.
-
-The fix is to refresh the secret named by the route's `credential_key` and restart the nono session so the proxy reloads it:
+nono exports a route's phantom **only once that route has loaded** (`server.rs:630`). What "loaded" means depends on the route's `credential_key`, so check it first:
 
 ```bash
 ado_nono_route
 ```
 
 ```
+profile:         <profile>.json
 route:           azure_devops -> https://dev.azure.com
 env_var:         AZURE_DEVOPS_EXT_PAT   (holds the phantom, never a secret)
 inject_mode:     header
 inject_header:   Authorization
-credential_key:  env://AZURE_ACCESS_TOKEN   <- refresh THIS when the env_var is empty
+credential_key:  cmd://azure_devops
+captured by:     az account get-access-token --resource 499b84ac-… --query accessToken --output tsv
+                 (on the host, on first use; a failed capture answers 503 - fix the host login, no restart)
 endpoint_rules:  every path permitted
 ```
+
+| `credential_key` | Loaded when | Empty `$AZURE_DEVOPS_EXT_PAT` means |
+|---|---|---|
+| `cmd://…` | At proxy start, without fetching anything. The command runs on the host on the first matching request | The route is **not active** in this session: the profile that defines it (directly or via `--extends`) was not part of this session, or the route is missing from the final `network.credentials` list |
+| anything else (`op://`, `env://`, keystore) | At proxy start, by reading the secret | The upstream secret failed to load. Usually it expired |
+
+Either way the fix is outside the sandbox — report it to the user; the session has to be restarted with the route active or the secret refreshed.
+
+Do **not** substitute `$NONO_PROXY_TOKEN` by hand here. With no loaded route there is nothing to swap it for; the proxy forwards it and Azure DevOps answers with a sign-in page — a failure that reads like a dead PAT and is not one.
+
+#### A `cmd://` capture that fails answers 503
+
+A `cmd://` route fetches its credential on the host at the first request, then caches it (`cache_ttl_secs`). When the command fails — typically an expired host-side login such as `az login` — the proxy answers **503 `{"error":"Service Unavailable"}`** and never forwards. `ado__report` labels that `CaptureFailed`. Failures are not cached: once the user fixes the host login, the next request re-runs the command and succeeds in the same session. No restart.
 
 An empty `endpoint_rules` list means every path on that host is permitted.
 
@@ -199,7 +207,8 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 | `401` whose body is not an Azure DevOps error (no `typeKey`/`typeName`, e.g. `{"error":"Unauthorized"}`) — **outside** a sandbox | An intermediary answered — the request never reached Azure DevOps | Check the base URL `ado_resolve` printed. Re-run with `AZURE_DEVOPS_BASE_URL=https://dev.azure.com`. Do not touch the credential |
 | Same bare `401`, **inside** a sandbox (`ado_resolve` printed `Sandbox … yes`) | The nono proxy rejected the phantom token. Azure DevOps never saw the request | Confirm `ado_resolve` printed `nono phantom token`, then check the shape against the route's `inject_mode` (`ado_nono_route`). Do not touch the credential and do not change the base URL |
 | Any error carrying `typeKey`/`typeName`, inside a sandbox | **The phantom validated** — the proxy swapped in the real credential and Azure DevOps answered | Read the row for that specific error. The route is not the problem |
-| Empty credential variable in a nono session (`STOP` with the sandbox note) | The route's upstream secret failed to load at proxy start — usually expired | Refresh the secret named by the route's `credential_key` (`ado_nono_route`), then restart the nono session. Never hand-send `$NONO_PROXY_TOKEN` instead |
+| Empty credential variable in a nono session (`STOP` with the sandbox note) | `cmd://` route: not active in this session. Other keys: the upstream secret failed to load at proxy start — usually expired | Check with `ado_nono_route` and report to the user; the session needs a restart with the route active or the secret refreshed. Never hand-send `$NONO_PROXY_TOKEN` instead |
+| `503 {"error":"Service Unavailable"}` in a nono session (`CaptureFailed`) | A `cmd://` route's host command failed — usually an expired host-side login (e.g. `az login`) | Ask the user to fix the host login (`ado_nono_route` shows the command), then retry. No restart |
 | `403` with `VS403403` / "does not have permission" | Credential is valid, PAT scope too narrow | Report the needed scope: `vso.code` to read, `vso.code_write` to reply or change thread status. Stop |
 | `TF400813` / `TF401019` | Principal has no access to this project or repo | Report the missing access and scope. Stop |
 | `GitRepositoryNotFoundException` on a path that looks right | Repo name wrong, or the project segment is missing from the base URL | Re-run `ado_discover`; the base must be `.../{org}/{project}/_apis/...`, never org-only |

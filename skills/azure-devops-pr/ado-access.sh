@@ -152,17 +152,21 @@ ado__pick_cred() {
   echo "  Checked: $ADO_CRED_VARS"
   if [ "${ADO_SANDBOX:-no}" = yes ] && [ -n "${NONO_PROXY_TOKEN:-}" ]; then
     echo
-    echo "  An empty credential variable in a nono session is a specific, fixable state —"
-    echo "  not a missing route. nono exports a route's phantom token only once that"
-    echo "  route's real credential has loaded (server.rs:630), so empty means the"
-    echo "  upstream secret failed to load at proxy start. Usually it expired."
+    echo "  An empty credential variable in a nono session is a specific, fixable state."
+    echo "  nono exports a route's phantom token only once that route has loaded"
+    echo "  (server.rs:630). What that means depends on the route's credential_key:"
+    echo "    cmd://  loads at start without fetching anything, so empty means the route"
+    echo "            is not active in this session - the profile layer defining it was"
+    echo "            not composed in, or the route is not in network.credentials."
+    echo "    other   the upstream secret failed to load at proxy start. Usually expired."
     echo
     echo "  Do NOT substitute \$NONO_PROXY_TOKEN by hand. With no loaded route there is"
     echo "  nothing for the proxy to swap it for: it forwards the token and Azure DevOps"
     echo "  answers with a sign-in page, which reads like a dead PAT and is not one."
     echo
-    echo "  Fix: refresh the secret named by the route's credential_key, then restart the"
-    echo "  nono session so the proxy reloads it. 'ado_nono_route' names that secret."
+    echo "  Fix: run 'ado_nono_route' to see the route, then report to the user - the"
+    echo "  session has to be restarted with the route active (cmd://) or with the secret"
+    echo "  refreshed (other keys). Neither is fixable from inside the sandbox."
   fi
   return 2
 }
@@ -173,9 +177,31 @@ ado_nono_route() {
   local out
   out=$(python3 - <<'NONOPY'
 import json, os, re, glob, sys
+def jsonc(s):
+    # Profiles may carry /* */ and // comments. Strip them outside strings only:
+    # paths such as "/**" and "workspaces/*/api" look like comment markers.
+    out, i, n, q = [], 0, len(s), False
+    while i < n:
+        c = s[i]
+        if q:
+            out.append(c)
+            if c == "\\": out.append(s[i + 1:i + 2]); i += 1
+            elif c == '"': q = False
+        elif c == '"': q = True; out.append(c)
+        elif s.startswith("/*", i):
+            end = s.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        elif s.startswith("//", i):
+            end = s.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        else: out.append(c)
+        i += 1
+    return "".join(out)
 found = False
 for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
-    txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
+    txt = re.sub(r",(\s*[}\]])", r"\1", jsonc(open(f).read()))   # profiles may carry trailing commas
     try:
         p = json.loads(txt)
     except Exception as e:
@@ -189,7 +215,14 @@ for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json")))
         print("env_var:         %s   (holds the phantom, never a secret)" % c.get("env_var"))
         print("inject_mode:     %s" % (c.get("inject_mode") or "header (default)"))
         print("inject_header:   %s" % (c.get("inject_header") or "Authorization (default)"))
-        print("credential_key:  %s   <- refresh THIS when the env_var is empty" % c.get("credential_key"))
+        key = c.get("credential_key") or ""
+        print("credential_key:  %s" % key)
+        if key.startswith("cmd://"):
+            cap = (p.get("credential_capture") or {}).get(key[6:]) or {}
+            print("captured by:     %s" % " ".join(cap.get("command") or ["<no credential_capture entry>"]))
+            print("                 (on the host, on first use; a failed capture answers 503 - fix the host login, no restart)")
+        else:
+            print("                 ^ refresh THIS and restart the session when the env_var is empty")
         rules = c.get("endpoint_rules") or []
         print("endpoint_rules:  %s" % ("every path permitted" if not rules else ""))
         for r in rules:
@@ -295,7 +328,16 @@ sandbox = os.environ.get("ADO_SANDBOX") == "yes"
 if isinstance(d, dict) and (d.get("typeKey") or d.get("typeName") or not status.startswith("2")):
     key = d.get("typeKey") or d.get("errorCode") or status
     hint = None
-    if not (d.get("typeKey") or d.get("typeName")):
+    if sandbox and status == "503" and not (d.get("typeKey") or d.get("typeName")):
+        # A cmd:// route captures its credential on the host on first use. When that
+        # command fails (e.g. an expired host login) the proxy answers 503 {"error":"Service
+        # Unavailable"} instead of forwarding. Failures are not cached.
+        key = "CaptureFailed"
+        hint = ("the nono proxy could not capture the credential on the host - usually an "
+                "expired host-side login (e.g. az login). The request never reached Azure DevOps. Run ado_nono_route "
+                "to see the capture command, ask the user to fix the host login, then retry: "
+                "no restart needed. Do not touch the phantom or the base URL")
+    elif not (d.get("typeKey") or d.get("typeName")):
         # Azure DevOps errors always carry typeKey/typeName. A bare {"error": ...}
         # came from something in front of the API, not from the API.
         hint = ("not an Azure DevOps error payload - an intermediary answered at %s, so the "

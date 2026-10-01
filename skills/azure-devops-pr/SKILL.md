@@ -170,7 +170,8 @@ Add `threadContext` to anchor the thread to a file/line.
 | Sending `AZURE_BEARER_TOKEN` to dev.azure.com | That is an ARM-audience token. Wrong audience; it will never work here |
 | Treating `$AZURE_DEVOPS_EXT_PAT` as a PAT when it is byte-identical to `$NONO_PROXY_TOKEN` | It is a nono *phantom token*, not a PAT. It goes out as `Bearer`, not Basic — `ado_resolve` prints `nono phantom token` when it detects this ([access.md](access.md#proxy-injected-credentials--the-phantom-token-pattern)) |
 | Sending no `Authorization` at all in a sandbox, expecting the proxy to supply it | The proxy replaces a *validated phantom*; it never conjures one. A missing header fails identically to a wrong one |
-| Treating an empty credential variable in a sandbox as "no route" | nono exports the phantom only once the route's real secret loads. Empty means that secret expired — refresh it (`ado_nono_route`), do not hand-send `$NONO_PROXY_TOKEN` |
+| Guessing why a credential variable is empty in a sandbox | Depends on the route's `credential_key` (`ado_nono_route`): a `cmd://` route is not active this session; any other key's secret failed to load. Report it; do not hand-send `$NONO_PROXY_TOKEN` |
+| Reading a sandbox `503 CaptureFailed` as an outage | The host-side `cmd://` capture failed, usually an expired login (e.g. `az login`). The user fixes the login, you retry — no restart |
 | Reading a sandbox `401` as a dead credential | Check the body's shape first: `typeKey`/`typeName` present = Azure DevOps answered, so the phantom was fine; a bare `{"error":"Unauthorized"}` = the proxy refused it |
 | Using org-level base URL for git routes | Base must include the project: `.../dev.azure.com/{org}/{project}/_apis/...` |
 | Branch ref without prefix | Use `refs/heads/{branch}`, not the bare branch name |
