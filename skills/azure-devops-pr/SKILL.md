@@ -19,7 +19,7 @@ Two things drive most wrong conclusions:
 0. **Establish access as a verified state, before touching the PR.** Access is a tuple — credential variable, auth scheme, base URL, routing identifiers — not just "a token." Resolve all of it in one bounded pass:
 
    ```bash
-   SKILL_DIR=<directory containing this skill>   # e.g. ~/.agents/skills/azure-devops-pr
+   SKILL_DIR=<directory containing this SKILL.md>
    source "$SKILL_DIR/ado-access.sh"
    ado_discover                     # org, project, repo, branch from the git remote
    ado_resolve                      # credential + scheme + base URL + identity probe
