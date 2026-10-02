@@ -8,6 +8,8 @@ export interface SessionDeps {
   cli: HunkCli;
   /** The repository root, or undefined outside a repository. */
   gitRoot: () => Promise<string | undefined>;
+  /** The repository's shared `.git` for a checkout, or undefined when unreadable. */
+  commonDir: (path: string) => Promise<string | undefined>;
   realpath: (path: string) => Promise<string>;
   spawn: (target: string[]) => Promise<SpawnOutcome>;
   sleep: (ms: number) => Promise<void>;
@@ -43,6 +45,24 @@ async function matching(deps: SessionDeps, sessions: HunkSession[], root: string
 }
 
 /**
+ * Sessions opened from another checkout of the same repository — the main one
+ * when pi runs in a worktree, or the reverse. Their notes are on this branch
+ * whenever the window is reviewing it, which is the usual reason to have one.
+ */
+async function siblings(deps: SessionDeps, sessions: HunkSession[], root: string): Promise<HunkSession[]> {
+  const target = await deps.commonDir(root);
+  if (!target) return [];
+  const resolvedTarget = await resolveOrSelf(deps.realpath, target);
+  const matches: HunkSession[] = [];
+  for (const session of sessions) {
+    if (!session.repoRoot) continue;
+    const common = await deps.commonDir(session.repoRoot);
+    if (common && (await resolveOrSelf(deps.realpath, common)) === resolvedTarget) matches.push(session);
+  }
+  return matches;
+}
+
+/**
  * A live session showing the target, or an explanation. Called without a target
  * — as fix mode calls it — there is nothing to spawn, so an absent window is
  * reported rather than created: a window opened now would be empty of the notes
@@ -67,7 +87,10 @@ export async function ensureSession(
   const listed = await deps.cli.listSessions();
   if (!listed.ok) return { kind: "none", message: listed.message };
 
-  const matches = await matching(deps, listed.value, root);
+  // Without a target only notes are read, so a window from a sibling checkout
+  // serves. With one it would be reloaded onto a diff of that checkout's files.
+  let matches = await matching(deps, listed.value, root);
+  if (matches.length === 0 && !options.target) matches = await siblings(deps, listed.value, root);
 
   if (matches.length > 1) {
     return { kind: "ambiguous", sessionIds: matches.map((session) => session.sessionId) };

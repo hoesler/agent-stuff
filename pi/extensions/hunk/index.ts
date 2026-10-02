@@ -68,6 +68,16 @@ export default function hunkExtension(pi: ExtensionAPI) {
     return result.stdout.trim() || undefined;
   }
 
+  async function commonDir(cwd: string): Promise<string | undefined> {
+    try {
+      const result = await pi.exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd });
+      if (result.code !== 0) return undefined;
+      return result.stdout.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The same `ctx.ui.custom` + `SelectList` shape `code-review` and `agent-modes` use. */
   async function pick(ctx: ExtensionCommandContext, options: PickOptions): Promise<Picked | undefined> {
     if (options.items.length === 0) return undefined;
@@ -136,6 +146,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
       {
         cli: cliFor(ctx.cwd),
         gitRoot: () => gitRoot(ctx.cwd),
+        commonDir,
         realpath: (path) => realpath(path),
         spawn: createSpawn(
           { exec, env: process.env, platform: process.platform },

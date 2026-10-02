@@ -38,6 +38,7 @@ function deps(overrides: Partial<SessionDeps> & { cli: HunkCli }): SessionDeps {
   let clock = 0;
   return {
     gitRoot: async () => "/work/repo",
+    commonDir: async () => undefined,
     realpath: async (path: string) => path,
     spawn: async () => ({ ok: true }),
     sleep: async (ms: number) => {
@@ -209,4 +210,55 @@ test("a poll that never finds the window gives up instead of hanging", async () 
   assert.equal(result.kind, "none");
   assert.match(result.kind === "none" ? result.message : "", /did not register/);
   assert.ok(listCalls() <= POLL_CEILING_MS / 200 + 2, "polling must be bounded");
+});
+
+/** Two checkouts of one repository: the main one and a worktree beside it. */
+const sharedCommonDir = async (path: string) =>
+  path === "/work/repo" || path === "/work/repo-wt" ? "/work/repo/.git" : `${path}/.git`;
+
+test("with no target, a window opened from another checkout of the repository is found", async () => {
+  const { cli } = fakeCli([{ ok: true, value: [session("abc", "/work/repo"), session("xyz", "/elsewhere")] }]);
+  const result = await ensureSession(
+    deps({ cli, gitRoot: async () => "/work/repo-wt", commonDir: sharedCommonDir }),
+    {},
+  );
+  assert.deepEqual(result, { kind: "session", sessionId: "abc" });
+});
+
+test("a window in this very checkout wins over one in a sibling checkout", async () => {
+  const { cli } = fakeCli([{ ok: true, value: [session("main", "/work/repo"), session("wt", "/work/repo-wt")] }]);
+  const result = await ensureSession(
+    deps({ cli, gitRoot: async () => "/work/repo-wt", commonDir: sharedCommonDir }),
+    {},
+  );
+  assert.deepEqual(result, { kind: "session", sessionId: "wt" });
+});
+
+test("with a target, a sibling checkout's window is not reloaded: its diff would be of other files", async () => {
+  let spawned: string[] | undefined;
+  const { cli, reloads } = fakeCli([
+    { ok: true, value: [session("abc", "/work/repo")] },
+    { ok: true, value: [session("abc", "/work/repo"), session("new", "/work/repo-wt")] },
+  ]);
+  const result = await ensureSession(
+    deps({
+      cli,
+      gitRoot: async () => "/work/repo-wt",
+      commonDir: sharedCommonDir,
+      spawn: async (target) => {
+        spawned = target;
+        return { ok: true };
+      },
+    }),
+    { target: ["diff"] },
+  );
+  assert.deepEqual(result, { kind: "session", sessionId: "new" });
+  assert.deepEqual(spawned, ["diff"]);
+  assert.equal(reloads.length, 0);
+});
+
+test("a checkout whose common dir cannot be read is no sibling", async () => {
+  const { cli } = fakeCli([{ ok: true, value: [session("abc", "/work/repo")] }]);
+  const result = await ensureSession(deps({ cli, gitRoot: async () => "/work/repo-wt" }), {});
+  assert.deepEqual(result, { kind: "none", message: "No Hunk window is open for this repository." });
 });

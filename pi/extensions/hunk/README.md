@@ -97,7 +97,7 @@ herdr sets `HERDR_ENV=1` in every pane it manages, and that is how the extension
 ## What it leaves alone
 
 - **User notes**: The extension never removes notes, even when fixing them. Only a reply hanging off a note marks it handled.
-- **Other sessions**: Each Hunk session is independent. The extension only looks for sessions in the current repository.
+- **Other sessions**: Each Hunk session is independent. The extension only looks for sessions in the current repository. Reading notes (`/hunk fix`, the menu's notes row) also accepts a window opened from another checkout of it — the main one when pi runs in a worktree — if none is open in this one. Reviewing a target never reuses such a window, because its diff would be of that checkout's files.
 - **Manual notes**: Notes left with the TUI are never touched. A reply you write yourself does not mark your own note handled — only the agent's does.
 - **The Hunk window**: After spawning, the extension hands the terminal to you. You type commands, edit files, and open the diff just as you would without the agent.
 
