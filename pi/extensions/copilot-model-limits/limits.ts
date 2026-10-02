@@ -115,10 +115,14 @@ export function parseCopilotLimits(payload: unknown): Map<string, ModelLimits> {
  * business: since 0.85 the built-in Copilot provider filters the catalog by the
  * account's available model ids, and a second opinion from here would only
  * fight it.
+ *
+ * Only chat models take the limits. Since pi 1.0 a provider's list may also
+ * hold image and classifier models, which have no output limit, and they come
+ * back exactly as pi listed them.
  */
-export function applyCopilotLimits<T extends { id: string; contextWindow: number; maxTokens: number }>(
+export function applyCopilotLimits<T extends { id: string; type?: string }>(
   models: readonly T[],
   limits: ReadonlyMap<string, ModelLimits>,
 ): T[] {
-  return models.map((model) => ({ ...model, ...limits.get(model.id) }));
+  return models.map((model) => (model.type === undefined || model.type === "chat" ? { ...model, ...limits.get(model.id) } : model));
 }

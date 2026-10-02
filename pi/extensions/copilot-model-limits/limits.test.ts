@@ -156,3 +156,12 @@ test("pi's own catalog objects are left untouched", () => {
   assert.deepEqual(builtIn, original);
   assert.notEqual(patched[0], builtIn[0]);
 });
+
+// Since pi 1.0 a provider's list can hold image and classifier models, and the
+// list a refresh returns replaces the whole catalog. Only chat models have an
+// output limit to fold in; anything else has to come back as it was.
+test("a model that is not a chat model passes through untouched", () => {
+  const image = { id: "gpt-5.4", name: "GPT-5.4 Image", type: "image" as const, output: ["image" as const] };
+  const patched = applyCopilotLimits([image], new Map([["gpt-5.4", { contextWindow: 1_000_000, maxTokens: 128_000 }]]));
+  assert.equal(patched[0], image);
+});
