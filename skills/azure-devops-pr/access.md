@@ -169,7 +169,7 @@ PR lookup: OK (HTTP 200)
 PR: 1234 | repo: my-repo | project: MyProject
 ```
 
-Until this prints a PR id, do not read threads, do not implement changes, and do not draw conclusions about the review. If it fails, take the error to the decision table below — it names the one corrective action.
+With no active PR it exits `3` — access works; that is the starting point for [creating one](create-pr.md). Until it prints a PR id, do not read threads, do not implement changes, and do not draw conclusions about the review. If it fails, take the error to the decision table below — it names the one corrective action.
 
 After the gate passes, `ado_api` is bound to the validated project and repo:
 
@@ -181,7 +181,7 @@ ado_reply <threadId> <parentCommentId> "Done — extracted into \`bar.py:42\`."
 ado_thread_status <threadId> fixed
 ```
 
-`ado_api` appends `api-version=7.0` unless the path already carries one, escapes JSON bodies through `json.dumps`, and classifies every response before printing it.
+`ado_api` appends `api-version=7.0` unless the path already carries one and classifies every response before printing it. It sends its body verbatim; the wrappers (`ado_reply`, `ado_create_pr`) build theirs with `json.dumps`.
 
 ## The success that isn't
 
@@ -215,7 +215,7 @@ Every access failure has exactly one corrective action. Take it; do not explore.
 | `400` naming the API version | `api-version` missing or unsupported on that route | Use `api-version=7.0`; let `ado_api` add it |
 | `VssInvalidPreviewVersionException` ("the requested version … is under preview") | That route is preview-only; the version sent lacked `-preview` | Append `-preview` to that route's `api-version`. **Access works** — this is the request, not the credential |
 | Proxy `Forbidden` / no HTTP response at all | Route or endpoint rule does not permit this host or path | Read the profile's `endpoint_rules` (Step 2) and report the required route |
-| `value: []` on the PR search | **Access works.** No active PR for that branch | Check the branch, the `refs/heads/` prefix, and `status=active`. Do not touch credentials |
+| `value: []` on the PR search (`ado_gate` exit `3`) | **Access works.** No active PR for that branch | Creating one → [create-pr.md](create-pr.md). Otherwise check the branch, the `refs/heads/` prefix, and `status=active`. Do not touch credentials |
 | Thread list returns rows but none actionable | **Access works.** Filtering problem | Drop `isDeleted: true` threads and check `status`. Do not touch credentials |
 
 The dividing line: the last two rows mean you are already inside the API and the problem is the query. Everything above them means the call never authenticated.

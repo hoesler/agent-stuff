@@ -389,9 +389,10 @@ ado__report() { python3 -c "$ado__REPORT_PY" "$@"; }
 # ------------------------------------------------------------------- the gate
 # PR access is established only when a PR query actually returns JSON.
 # Sets ADO_PR_ID. Optional arg: an explicit PR id to adopt instead of searching.
+# Exit codes: 0 PR found, 1 access/request failure, 2 not resolved,
+# 3 no active PR for the branch — access works; the expected state before creating one.
 ado_gate() {
-  ado__require_resolved || return 2
-  ADO_PROJ_BASE="$ADO_BASE/$ADO_ORG/$ADO_PROJECT/_apis"
+  ado__bind_project || return 2
 
   if [ -n "${1:-}" ]; then
     ADO_PR_ID="$1"
@@ -412,10 +413,17 @@ print(v[0]["pullRequestId"] if v else "")
 ')
   if [ -z "$ADO_PR_ID" ]; then
     echo "No active PR for refs/heads/$ADO_BRANCH."
-    echo "  Access works — this is an empty result, not a failure. Check the branch, or pass a PR id: ado_gate <prId>"
-    return 1
+    echo "  Access works — this is an empty result, not a failure. Check the branch, pass a PR id"
+    echo "  (ado_gate <prId>), or create one (create-pr.md)."
+    return 3
   fi
   echo "PR: $ADO_PR_ID | repo: $ADO_REPO | project: $ADO_PROJECT"
+}
+
+# Binds ado_api to the project. Needs a resolved identity, not a PR.
+ado__bind_project() {
+  ado__require_resolved || return 2
+  ADO_PROJ_BASE="$ADO_BASE/$ADO_ORG/$ADO_PROJECT/_apis"
 }
 
 # --------------------------------------------------------------- api helper
@@ -424,17 +432,18 @@ print(v[0]["pullRequestId"] if v else "")
 # api-version=7.0 is appended unless the path already carries one.
 ado_api() {
   if [ -z "${ADO_PROJ_BASE:-}" ]; then echo "ado_gate has not run yet — run it first."; return 2; fi
-  local method="$1" path="$2" body="${3:-}" url sep
-  case "$path" in /*) ;; *) echo "path must start with '/'"; return 2 ;; esac
-  case "$path" in *api-version=*) url="$ADO_PROJ_BASE$path" ;;
-    *) case "$path" in *\?*) sep='&' ;; *) sep='?' ;; esac
-       url="$ADO_PROJ_BASE$path${sep}api-version=7.0" ;;
+  # Not "path": in zsh that local is tied to $PATH and hides python3/curl.
+  local method="$1" api_path="$2" body="${3:-}" url sep
+  case "$api_path" in /*) ;; *) echo "path must start with '/'"; return 2 ;; esac
+  case "$api_path" in *api-version=*) url="$ADO_PROJ_BASE$api_path" ;;
+    *) case "$api_path" in *\?*) sep='&' ;; *) sep='?' ;; esac
+       url="$ADO_PROJ_BASE$api_path${sep}api-version=7.0" ;;
   esac
   local out rep
   out=$(ado__curl "$method" "$url" "$body")
   # Report once; on failure send the classification to stderr so it survives
   # a caller that redirects stdout.
-  rep=$(printf '%s' "$out" | ado__report "$method $path") || {
+  rep=$(printf '%s' "$out" | ado__report "$method $api_path") || {
     printf '%s\n' "$rep" >&2; return 1; }
   printf '%s' "$out" | python3 -c '
 import json,sys
@@ -456,4 +465,71 @@ ado_reply() {
 ado_thread_status() {
   ado_api PATCH "/git/repositories/$ADO_REPO/pullrequests/$ADO_PR_ID/threads/$1" \
     "{\"status\": \"$2\"}"
+}
+
+# ------------------------------------------------------------- PR creation
+# Browser link. Always dev.azure.com — ADO_BASE may be a proxy, and the API's
+# own "url" field is a REST link, not a page.
+ado_web_url() {
+  echo "https://dev.azure.com/$ADO_ORG/$ADO_PROJECT/_git/$ADO_REPO/pullrequest/${1:-$ADO_PR_ID}"
+}
+
+# Prints the repo's default branch without refs/heads/ — the usual PR target.
+ado_default_branch() {
+  ado__bind_project || return 2
+  local out
+  out=$(ado_api GET "/git/repositories/$ADO_REPO") || return 1
+  printf '%s' "$out" | python3 -c '
+import json,sys
+print((json.load(sys.stdin).get("defaultBranch") or "").replace("refs/heads/","",1))'
+}
+
+# Succeeds only when the remote branch exists and points at local HEAD.
+# Asks Azure DevOps, not git, so it works where git has no network credential.
+ado_branch_pushed() {
+  ado__bind_project || return 2
+  local out remote local_sha
+  out=$(ado_api GET "/git/repositories/$ADO_REPO/refs?filter=heads/$ADO_BRANCH") || return 1
+  remote=$(printf '%s' "$out" | B="$ADO_BRANCH" python3 -c '
+import json,sys,os
+b = "refs/heads/" + os.environ["B"]
+print(next((r["objectId"] for r in json.load(sys.stdin).get("value", []) if r["name"] == b), ""))')
+  local_sha=$(git rev-parse HEAD)
+  if [ -z "$remote" ]; then echo "NOT PUSHED: refs/heads/$ADO_BRANCH does not exist on the remote."; return 1; fi
+  if [ "$remote" != "$local_sha" ]; then
+    echo "OUT OF DATE: remote $ADO_BRANCH is ${remote:0:8}, local HEAD is ${local_sha:0:8}."; return 1
+  fi
+  echo "Pushed: $ADO_BRANCH at ${local_sha:0:8}"
+}
+
+# ado_create_pr <targetBranch> <title> <descriptionFile> [workItemId ...]
+# Always creates a DRAFT. Sets ADO_PR_ID and prints the web link.
+ado_create_pr() {
+  ado__bind_project || return 2
+  local target="$1" title="$2" file="$3"; shift 3 || { echo "usage: ado_create_pr <target> <title> <file> [workItemId...]"; return 2; }
+  [ -f "$file" ] || { echo "description file '$file' not found"; return 2; }
+  local body out
+  body=$(SRC="$ADO_BRANCH" TGT="$target" TITLE="$title" python3 - "$file" "$@" <<'PY'
+import json, os, sys
+desc = open(sys.argv[1]).read()
+if len(desc) > 4000:
+    sys.exit("description is %d chars; Azure DevOps rejects more than 4000. Shorten it." % len(desc))
+b = {"sourceRefName": "refs/heads/" + os.environ["SRC"],
+     "targetRefName": "refs/heads/" + os.environ["TGT"].replace("refs/heads/", "", 1),
+     "title": os.environ["TITLE"], "description": desc, "isDraft": True}
+if sys.argv[2:]:
+    b["workItemRefs"] = [{"id": w.upper().removeprefix("AB").lstrip("#")} for w in sys.argv[2:]]
+print(json.dumps(b))
+PY
+) || return 2
+  out=$(ado_api POST "/git/repositories/$ADO_REPO/pullrequests" "$body") || return 1
+  ADO_PR_ID=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["pullRequestId"])')
+  echo "Draft PR: $ADO_PR_ID"
+  echo "Link:     $(ado_web_url)"
+}
+
+# Draft -> ready for review. Only on the user's explicit go-ahead.
+ado_publish_pr() {
+  ado_api PATCH "/git/repositories/$ADO_REPO/pullrequests/${1:-$ADO_PR_ID}" '{"isDraft": false}' >/dev/null || return 1
+  echo "Published: $(ado_web_url "${1:-$ADO_PR_ID}")"
 }
