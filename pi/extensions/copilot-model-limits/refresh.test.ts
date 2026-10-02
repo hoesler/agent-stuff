@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { createCopilotModelRefresh } from "./refresh.ts";
 import type { RefreshContext } from "./refresh.ts";
 
 const MODELS = [
   { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, input: ["text" as const], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, contextWindow: 400_000, maxTokens: 64_000 },
 ];
+
+/**
+ * The refreshed model as the chat model it has to be; only chat models carry
+ * limits. Narrowed on the fields read rather than on `type`, which pi only
+ * added in 1.0, so the tests also build against the oldest supported pi.
+ */
+const chat = (model: ProviderModelConfig | undefined) => {
+  assert.ok(model && "contextWindow" in model && "maxTokens" in model, "expected a chat model");
+  return model;
+};
 
 const TOKEN = "tid=a;proxy-ep=proxy.individual.githubcopilot.com";
 
@@ -42,8 +53,8 @@ test("the reported limits replace pi's own", async () => {
   const { fetchModels } = answering(catalogue);
   const refresh = createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels });
   const models = await refresh(context());
-  assert.equal(models[0]?.contextWindow, 1_000_000);
-  assert.equal(models[0]?.maxTokens, 128_000);
+  assert.equal(chat(models[0]).contextWindow, 1_000_000);
+  assert.equal(chat(models[0]).maxTokens, 128_000);
 });
 
 test("the account's own endpoint is asked, with the headers Copilot expects", async () => {
@@ -68,7 +79,7 @@ test("the offline pass returns pi's list untouched and asks nothing", async () =
   const { calls, fetchModels } = answering(catalogue);
   const models = await createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels })(context({ allowNetwork: false }));
   assert.equal(calls.length, 0);
-  assert.equal(models[0]?.contextWindow, 400_000);
+  assert.equal(chat(models[0]).contextWindow, 400_000);
 });
 
 // /models speaks the OAuth proxy token. A COPILOT_GITHUB_TOKEN api key is an
@@ -78,7 +89,7 @@ test("without an OAuth credential pi's list is returned untouched and nothing is
     const { calls, fetchModels } = answering(catalogue);
     const models = await createCopilotModelRefresh({ builtInModels: () => MODELS, fetchModels })(context({ credential: stored }));
     assert.equal(calls.length, 0);
-    assert.equal(models[0]?.contextWindow, 400_000);
+    assert.equal(chat(models[0]).contextWindow, 400_000);
   }
 });
 
