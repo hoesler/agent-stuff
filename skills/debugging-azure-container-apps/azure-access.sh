@@ -133,7 +133,7 @@ def jsonc(s):
         i += 1
     return "".join(out)
 found = False
-for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
+for f in sorted(glob.glob(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "nono", "profiles", "*.json"))):
     txt = re.sub(r",(\s*[}\]])", r"\1", jsonc(open(f).read()))   # profiles may carry trailing commas
     try:
         p = json.loads(txt)
@@ -282,7 +282,7 @@ az_gate() {
   AZ_WS_RG="$1"; AZ_WS_NAME="$2"; AZ_SUB="${3:-${AZ_SUB:-}}"
   if [ -z "$AZ_WS_RG" ] || [ -z "$AZ_WS_NAME" ] || [ -z "$AZ_SUB" ]; then
     echo "usage: az_gate <workspaceResourceGroup> <workspaceResourceName> <subscription-id>"
-    echo "  workspaceResourceName is a name like 'law-test-kic', never the customerId GUID."
+    echo "  workspaceResourceName is a name like 'law-myapp-test', never the customerId GUID."
     return 2
   fi
   # Casing matters: sandbox endpoint rules are written against 'resourceGroups'.

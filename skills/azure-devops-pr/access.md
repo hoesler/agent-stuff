@@ -22,7 +22,7 @@ A partial tuple produces a **partial success that reads like a real one**: the r
 Pure git, no network:
 
 ```bash
-SKILL_DIR=<directory containing this skill>   # e.g. ~/.agents/skills/azure-devops-pr
+SKILL_DIR=<directory containing this SKILL.md>
 source "$SKILL_DIR/ado-access.sh"
 ado_discover
 ```
@@ -148,7 +148,7 @@ Separately from the phantom, the CONNECT hop is authenticated with `Proxy-Author
 The sandbox does not grant `~/.azure`, so the CLI dies before parsing any command:
 
 ```
-PermissionError: [Errno 1] Operation not permitted: '/Users/you/.azure/azureProfile.json'
+PermissionError: [Errno 1] Operation not permitted: '<home>/.azure/azureProfile.json'
 ```
 
 This is the OS-level sandbox, below the agent's permission layer, so no flag, retry, or `dangerouslyDisableSandbox` gets past it. Pointing `AZURE_CONFIG_DIR` at a writable directory makes `az` start against an empty profile with no credentials — also a dead end.
@@ -166,7 +166,7 @@ Expected output:
 
 ```
 PR lookup: OK (HTTP 200)
-PR: 1234 | repo: kic-backend | project: KIC
+PR: 1234 | repo: my-repo | project: MyProject
 ```
 
 Until this prints a PR id, do not read threads, do not implement changes, and do not draw conclusions about the review. If it fails, take the error to the decision table below — it names the one corrective action.

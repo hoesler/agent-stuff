@@ -200,7 +200,7 @@ def jsonc(s):
         i += 1
     return "".join(out)
 found = False
-for f in sorted(glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json"))):
+for f in sorted(glob.glob(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "nono", "profiles", "*.json"))):
     txt = re.sub(r",(\s*[}\]])", r"\1", jsonc(open(f).read()))   # profiles may carry trailing commas
     try:
         p = json.loads(txt)

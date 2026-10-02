@@ -20,7 +20,7 @@ A partial tuple produces a partial success: ARM answers, Log Analytics returns `
 ## Step 1 — run the resolver
 
 ```bash
-SKILL_DIR=<directory containing this skill>   # e.g. ~/.agents/skills/debugging-azure-container-apps
+SKILL_DIR=<directory containing this SKILL.md>
 source "$SKILL_DIR/azure-access.sh"
 az_resolve
 ```
@@ -67,7 +67,7 @@ If `az_resolve` prints `STOP: no Azure credential in this session` outside a non
 The sandbox does not grant `~/.azure`, so the CLI dies before parsing any command:
 
 ```
-PermissionError: [Errno 1] Operation not permitted: '/Users/you/.azure/azureProfile.json'
+PermissionError: [Errno 1] Operation not permitted: '<home>/.azure/azureProfile.json'
 ```
 
 This is the OS-level sandbox, below the agent's permission layer, so no flag, retry, or `dangerouslyDisableSandbox` gets past it. Pointing `AZURE_CONFIG_DIR` at a writable directory makes `az` start against an empty profile with no credentials — also a dead end.
@@ -84,7 +84,7 @@ import json, os, re, glob
 cap = json.load(open(os.environ["NONO_CAP_FILE"]))
 print("allowed domains:", [d for d in cap["allowed_domains"]
                           if "azure" in d or "loganalytics" in d])
-for f in glob.glob(os.path.expanduser("~/.config/nono/profiles/*.json")):
+for f in glob.glob(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "nono", "profiles", "*.json")):
     txt = re.sub(r",(\s*[}\]])", r"\1", open(f).read())   # profiles may carry trailing commas
     try:
         p = json.loads(txt)
@@ -106,10 +106,10 @@ Four different values get called "the workspace." Confusing them is the single m
 
 | Value | Looks like | Used by |
 |---|---|---|
-| `workspaceResourceName` | `law-test-kic` | ARM workspace query path |
-| `workspaceResourceGroup` | `rg-kic-infrastructure-test` | ARM workspace query path |
+| `workspaceResourceName` | `law-myapp-test` | ARM workspace query path |
+| `workspaceResourceGroup` | `rg-myapp-test` | ARM workspace query path |
 | `customerId` | GUID | Log Analytics **data plane** path only |
-| `workspaceResourceId` | `/subscriptions/.../workspaces/law-test-kic` | ARM metadata, joins |
+| `workspaceResourceId` | `/subscriptions/.../workspaces/law-myapp-test` | ARM metadata, joins |
 
 The managed environment only carries the **`customerId` GUID**. Putting that GUID into an ARM resource path returns `ResourceNotFound`. Resolve the resource name by joining to the workspace resource:
 
@@ -148,7 +148,7 @@ Expected output:
 
 ```
 Log Analytics probe: OK (HTTP 200)
-Mode: ARM workspace query | workspace: law-test-kic | rg: rg-kic-infrastructure-test
+Mode: ARM workspace query | workspace: law-myapp-test | rg: rg-myapp-test
 ```
 
 Until this prints OK, do not query tables, do not write KQL, and do not draw conclusions about the application. If it fails, take the error to the decision table below — it names the one corrective action.

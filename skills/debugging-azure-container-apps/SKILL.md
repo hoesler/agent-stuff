@@ -19,7 +19,7 @@ Two things drive most wrong conclusions:
 0. **Establish access as a verified state, before any diagnosis.** Access is a tuple — credential variable, base URL, query mode, workspace identifier — not just "a token." Resolve all of it in one bounded pass:
 
    ```bash
-   SKILL_DIR=<directory containing this skill>   # e.g. ~/.agents/skills/debugging-azure-container-apps
+   SKILL_DIR=<directory containing this SKILL.md>
    source "$SKILL_DIR/azure-access.sh"
    az_resolve                                          # credential + ARM base + ARM probe
    az_workspaces                                       # workspaceResourceName, resourceGroup, customerId

@@ -204,19 +204,19 @@ Wait for the user to confirm which checks to run (if any) before proceeding to c
 
 **Always create the PR as a draft first.** Use a temporary file for the PR body to avoid shell escaping issues:
 
-1. Write the PR body to a temporary file:
-   ```
-   /tmp/pr-body.md
+1. Create a temporary file and write the PR body to it:
+   ```bash
+   PR_BODY=$(mktemp)
    ```
 
-2. Create the PR as a draft:
+2. Create the PR as a draft against the base branch from step 2:
    ```bash
-   gh pr create --title "PR_TITLE" --body-file /tmp/pr-body.md --base main --draft
+   gh pr create --title "PR_TITLE" --body-file "$PR_BODY" --base BASE_BRANCH --draft
    ```
 
 3. Clean up the temporary file:
    ```bash
-   rm /tmp/pr-body.md
+   rm "$PR_BODY"
    ```
 
 **Why use a file?** Passing complex markdown with newlines, special characters, and checkboxes directly via `--body` is error-prone. The `--body-file` flag handles all content reliably.
