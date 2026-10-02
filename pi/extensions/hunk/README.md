@@ -6,7 +6,7 @@
 
 | Command | Meaning |
 | --- | --- |
-| `/hunk` | The menu: what to look at, and whether the agent reviews it or you do. |
+| `/hunk` | The menu: what to look at, opened for you (`enter`) or reviewed by the agent (`r`). |
 | `/hunk <target>` | Review a specific target: same as `/hunk review <target>`. |
 | `/hunk review` | Pick a changeset and review it, opening or reloading a Hunk window. |
 | `/hunk review <target>` | Review a specific target: `diff`, `diff --staged`, `diff <branch>...HEAD`, `show <commit>`, or any other Hunk argument. |
@@ -37,11 +37,11 @@ Bare `/hunk` asks rather than decides:
 │   This branch vs main             12 files · hunk diff main...HEAD │
 │   A commit…                       choose from the last 15          │
 │   Another branch…                 choose what to compare against   │
-│ enter to review with the agent · o to open it yourself · esc       │
+│ enter to open it in Hunk · r to review with the agent · esc        │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-`enter` hands the changeset to the agent; `o` opens it in Hunk and leaves it to you. On the notes row `enter` addresses them and `o` means nothing, so the footer follows the cursor and names only the verbs the highlighted row has.
+`enter` opens the changeset in Hunk and leaves it to you; `r` hands it to the agent to review. On the notes row `enter` addresses them and `r` means nothing, so the footer follows the cursor and names only the verbs the highlighted row has.
 
 Rows appear only when they have something in them. A clean working tree has no `Uncommitted changes` row, a branch level with its base has no comparison row, and the notes row is there only while a live window holds notes you have not had answered yet. Whatever is missing is explained in a muted line under the rows — `no Hunk window open for this repository`, `no new notes in wB:p2`, `nothing uncommitted or staged` — and if nothing at all can be offered, the menu does not open.
 
