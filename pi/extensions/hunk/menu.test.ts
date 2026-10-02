@@ -136,7 +136,7 @@ test("the footer names the verbs that the highlighted row actually has", () => {
   assert.equal(menuFooter("notes", ["review", "open"]), "enter to address these notes · esc to cancel");
   assert.equal(
     menuFooter("uncommitted", ["review", "open"]),
-    "enter to review with the agent · o to open it yourself · esc to cancel",
+    "enter to open it in Hunk · r to review with the agent · esc to cancel",
   );
   assert.equal(menuFooter("uncommitted", ["review"]), "enter to review with the agent · esc to cancel");
   assert.equal(menuFooter("uncommitted", ["open"]), "enter to open it in Hunk · esc to cancel");

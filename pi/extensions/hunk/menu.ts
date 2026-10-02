@@ -122,8 +122,8 @@ export function menuNote(state: MenuState): string | undefined {
 export function menuFooter(value: string, allowed: readonly MenuAction[]): string {
   if (value === "notes") return "enter to address these notes · esc to cancel";
   const verbs: string[] = [];
-  if (allowed.includes("review")) verbs.push("enter to review with the agent");
-  if (allowed.includes("open")) verbs.push(allowed.includes("review") ? "o to open it yourself" : "enter to open it in Hunk");
+  if (allowed.includes("open")) verbs.push("enter to open it in Hunk");
+  if (allowed.includes("review")) verbs.push(allowed.includes("open") ? "r to review with the agent" : "enter to review with the agent");
   return [...verbs, "esc to cancel"].join(" · ");
 }
 

@@ -274,8 +274,8 @@ export default function hunkExtension(pi: ExtensionAPI) {
       items: rows.map((row) => row.item),
       note,
       footer: (value) => menuFooter(value, allowed),
-      // Matched whole, so the SS3 arrow keys (`\x1bOA`) cannot read as an `O`.
-      keys: allowed.includes("open") && allowed.includes("review") ? { o: "open", O: "open" } : undefined,
+      // Matched whole, so an escape sequence ending in `R` (a cursor report) cannot read as one.
+      keys: allowed.includes("open") && allowed.includes("review") ? { r: "review", R: "review" } : undefined,
     });
     if (!picked) {
       ctx.ui.notify(`Cancelled. ${SPAWN_HINT}`, "info");
@@ -301,7 +301,7 @@ export default function hunkExtension(pi: ExtensionAPI) {
     }
 
     // An explicit form has one verb, so its confirm means that verb.
-    const action: MenuAction = picked.action === "open" || !allowed.includes("review") ? "open" : "review";
+    const action: MenuAction = picked.action === "review" || !allowed.includes("open") ? "review" : "open";
     await act(ctx, target, sessionId, action);
   }
 
