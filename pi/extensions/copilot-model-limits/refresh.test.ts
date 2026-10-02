@@ -8,12 +8,13 @@ const MODELS = [
   { id: "gpt-5.4", name: "GPT-5.4", reasoning: true, input: ["text" as const], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, contextWindow: 400_000, maxTokens: 64_000 },
 ];
 
-/** pi exports the union but not its chat member. */
-type ProviderChatModelConfig = Exclude<ProviderModelConfig, { type: "image" | "classifier" }>;
-
-/** The refreshed model as the chat model it has to be; only chat models carry limits. */
-const chat = (model: ProviderModelConfig | undefined): ProviderChatModelConfig => {
-  assert.ok(model && (model.type === undefined || model.type === "chat"), "expected a chat model");
+/**
+ * The refreshed model as the chat model it has to be; only chat models carry
+ * limits. Narrowed on the fields read rather than on `type`, which pi only
+ * added in 1.0, so the tests also build against the oldest supported pi.
+ */
+const chat = (model: ProviderModelConfig | undefined) => {
+  assert.ok(model && "contextWindow" in model && "maxTokens" in model, "expected a chat model");
   return model;
 };
 
