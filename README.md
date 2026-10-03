@@ -23,6 +23,7 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | [`hunk`](pi/extensions/hunk) | One `/hunk` command over a live [Hunk](https://www.hunk.dev) diff window. Its menu offers what is actually there to look at — uncommitted work, this branch against its base, a commit — and each row either goes to the agent, which leaves findings as inline notes, or opens in Hunk for you to read. `/hunk fix` collects the notes you left and addresses them, replying on each line. Reuses the window you have open — splitting a [herdr](https://herdr.dev) pane or a Ghostty window to make one — and adopts Hunk's own agent skill so its CLI knowledge tracks the installed binary. |
 | [`copilot-usage`](pi/extensions/copilot-usage) | Reports remaining GitHub Copilot premium requests through `/copilot-usage`, reusing pi's own Copilot OAuth token. |
 | [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Refreshes the context-window and max-output limits pi holds for Copilot models with the ones the Copilot API reports for your account. Limits only: which models you may use is pi's own job since 0.85. |
+| [`ghostty-title`](pi/extensions/ghostty-title) | Ghostty window title and progress bar: project, session and model in the title, a spinner and pulsing progress bar while the agent works. The spinner pauses while a prompt waits on you, so the title holds still. Forked from [pi-ghostty](https://github.com/HazAT/pi-ghostty). |
 
 Each extension documents its own configuration in its README.
 
