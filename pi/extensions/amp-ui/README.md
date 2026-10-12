@@ -1,0 +1,74 @@
+# amp-ui
+
+[Amp](https://ampcode.com)-inspired UI for pi:
+
+- **Editor chrome.** A rounded editor box. Context-window usage and session cost
+  sit top-left, `model · thinking` top-right, and the working status with
+  `cwd (branch)` along the bottom border. It replaces pi's footer and working row.
+- **User messages.** Compact, with a bar in the current thinking level's color.
+- **Tool display.** Amp-style rendering for the built-in tools (read, grep,
+  find, ls, bash, edit, write): compact headers, collapsed output previews, a
+  live bash spinner, colored edit diffs. Only the rendering changes; execution
+  and schemas are pi's own. Other tools, MCP included, keep pi's rendering.
+- **Themes.** `amp-dark`, `amp-light` and `amp-gruvbox-dark-hard`, shipped in
+  `pi/themes`. While an `amp-dark`/`amp-light` theme is active, it follows the
+  device appearance.
+
+Forked from [amp-themes](https://github.com/me-frankan/amp-themes) by Frank
+(MIT, see `LICENSE`).
+
+## What changed from amp-themes
+
+- Third-party extensions can prepend a status label to the model row (see
+  below). The chrome hides pi's footer, so `ctx.ui.setStatus()` never shows.
+- The context-window usage is back in the top-left corner.
+- `amp-gruvbox-dark-hard` is kept, where upstream dropped it.
+- Packaging: the four upstream extensions load through one `index.ts`, the
+  tests run on `node:test` instead of vitest, and parameter properties became
+  plain fields so Node can strip the types.
+
+## Install
+
+Remove `npm:amp-themes` first, from the packages in `~/.pi/agent/settings.json`
+or through `pi config`; both would register the same renderers. Also leave out
+`npm:pi-tool-display`, which overrides the same built-in tools. Then enable this
+extension for the `hoesler` package:
+
+```
++pi/extensions/amp-ui/index.ts
+```
+
+and pick a theme:
+
+```json
+{
+  "theme": "amp-dark"
+}
+```
+
+Set `AMP_APPEARANCE=dark` or `AMP_APPEARANCE=light` to pin the appearance
+instead of following the device.
+
+## Status labels in the model row
+
+Any extension can prepend a short label, such as a mode name, to the
+`model · thinking` text. The contract is a `Set` on `globalThis`, so nothing
+needs to import this extension:
+
+```ts
+type AmpEditorStatusHook = () => string | undefined;
+
+function ampEditorStatusHooks(): Set<AmpEditorStatusHook> {
+  const g = globalThis as typeof globalThis & { __ampEditorStatusHooks?: Set<AmpEditorStatusHook> };
+  if (!g.__ampEditorStatusHooks) g.__ampEditorStatusHooks = new Set();
+  return g.__ampEditorStatusHooks;
+}
+
+// Return a label, or undefined/"" to show nothing right now.
+ampEditorStatusHooks().add(() => "mode:high");
+```
+
+Every hook runs on each render, and one that throws is skipped. Non-empty labels
+are joined with ` · ` in front of the model: `mode:high · claude-sonnet-5 · high`.
+`amp-editor-status-hooks.ts` exports `registerAmpEditorStatusHook` and
+`collectAmpEditorStatusLabel` with the same shape.

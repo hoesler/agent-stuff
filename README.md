@@ -24,8 +24,11 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | [`copilot-usage`](pi/extensions/copilot-usage) | Reports remaining GitHub Copilot premium requests through `/copilot-usage`, reusing pi's own Copilot OAuth token. |
 | [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Refreshes the context-window and max-output limits pi holds for Copilot models with the ones the Copilot API reports for your account. Limits only: which models you may use is pi's own job since 0.85. |
 | [`ghostty-title`](pi/extensions/ghostty-title) | Ghostty window title and progress bar: project, session and model in the title, a spinner and pulsing progress bar while the agent works. The spinner pauses while a prompt waits on you, so the title holds still. Forked from [pi-ghostty](https://github.com/HazAT/pi-ghostty). |
+| [`amp-ui`](pi/extensions/amp-ui) | Amp-inspired UI: rounded editor chrome with model, thinking level, context usage and working status on its borders, compact user messages, and Amp-style rendering for the built-in tools. Ships `amp-dark`, `amp-light` and `amp-gruvbox-dark-hard` themes, and follows the device appearance. Forked from [amp-themes](https://github.com/me-frankan/amp-themes). |
 
 Each extension documents its own configuration in its README.
+
+Themes live in `pi/themes`.
 
 ## Skills
 
