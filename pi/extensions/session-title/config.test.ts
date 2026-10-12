@@ -68,17 +68,21 @@ test("parseConfig fills defaults for omitted optional fields", () => {
   assert.deepEqual(parseConfig({ version: 1, model: "copilot/gpt-5-mini" }), {
     version: 1,
     model: "copilot/gpt-5-mini",
-    thinkingLevel: "off",
     enabled: true,
     maxLength: 50,
     debug: false,
   });
 });
 
+test("parseConfig leaves model and thinking level unset for the session model", () => {
+  const parsed = parseConfig({ version: 1 });
+  assert.equal("model" in parsed, false);
+  assert.equal("thinkingLevel" in parsed, false);
+});
+
 test("parseConfig requires version 1 and a provider/model string", () => {
   assert.throws(() => parseConfig({ model: "a/b" }), /root.version/);
   assert.throws(() => parseConfig({ version: 2, model: "a/b" }), /root.version/);
-  assert.throws(() => parseConfig({ version: 1 }), /root.model/);
   assert.throws(() => parseConfig({ version: 1, model: "nope" }), /root.model/);
   assert.throws(() => parseConfig({ version: 1, model: "/b" }), /root.model/);
   assert.throws(() => parseConfig({ version: 1, model: "a/" }), /root.model/);
@@ -115,13 +119,17 @@ test("mergeConfig accepts a project file with no version and no model", () => {
   assert.equal(merged.enabled, false);
 });
 
-test("loader reports missing when no file exists", async () => {
+test("loader falls back to the defaults when no file exists", async () => {
   const dir = await mkdtemp(join(tmpdir(), "session-title-"));
   try {
     const loader = new SessionTitleConfigLoader([join(dir, "absent.json")]);
     const snapshot = await loader.refresh();
-    assert.equal(snapshot.ok, false);
-    assert.equal(snapshot.ok === false && snapshot.reason, "missing");
+    assert.deepEqual(snapshot.ok && snapshot.config, {
+      version: 1,
+      enabled: true,
+      maxLength: 50,
+      debug: false,
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

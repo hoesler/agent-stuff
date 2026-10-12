@@ -1,20 +1,26 @@
 /**
- * session-title — name pi sessions with a cheap, explicitly configured model.
+ * session-title — name pi sessions with a configured model, or the session model.
  *
- * Automatic titling runs once, after the first user↔assistant exchange settles,
- * and only when a titling model is configured. A name set by the user is never
+ * Automatic titling runs once, after the first user↔assistant exchange settles.
+ * Without a configured model it uses the session model at the lowest thinking
+ * level that model supports. A name set by the user is never
  * overwritten; `/title` re-titles on demand from the current conversation.
  */
 
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { completeSimple, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai/compat";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionTitleConfigLoader, resolveConfigPaths } from "./config.ts";
 import { createController, type TitleController } from "./controller.ts";
 import { alreadyTitled, latestMarker, STATE_ENTRY_TYPE } from "./state.ts";
 import { generateTitle } from "./title.ts";
 import { initialDialogue, recentWindow } from "./transcript.ts";
-import { resolveTitlingModel, shouldTitleOnSettle, withResolvedEndpoint } from "./trigger.ts";
-import type { ConfigSnapshot, SessionTitleConfig, TitleMarker } from "./types.ts";
+import { selectTitlingModel, shouldTitleOnSettle, withResolvedEndpoint } from "./trigger.ts";
+import type { ConfigSnapshot, ModelThinkingLevel, SessionTitleConfig, TitleMarker } from "./types.ts";
+
+/** Titling is a small task: unless configured, use the least effort the model allows. */
+function titlingThinkingLevel(model: Model<any>, configured: ModelThinkingLevel | undefined): ModelThinkingLevel {
+  return configured ?? getSupportedThinkingLevels(model)[0] ?? "off";
+}
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
   let loader: SessionTitleConfigLoader | undefined;
@@ -30,6 +36,12 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
   const config = (): SessionTitleConfig | undefined => (snapshot?.ok ? snapshot.config : undefined);
 
   const isEnabled = () => sessionEnabled ?? config()?.enabled ?? false;
+
+  /** How status and doctor name the titling model. */
+  const modelLabel = (ctx: ExtensionContext, current: SessionTitleConfig): string => {
+    if (current.model) return current.model;
+    return ctx.model ? `session model (${ctx.model.provider}/${ctx.model.id})` : "session model (none selected)";
+  };
 
   const refresh = async (ctx: ExtensionContext): Promise<ConfigSnapshot> => {
     if (!loader) {
@@ -47,9 +59,8 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
   };
 
   /**
-   * A missing config means "feature off" and stays silent. A present but broken
-   * config, or a model that cannot be resolved or authenticated, warns once —
-   * a typo must not be indistinguishable from the feature being off.
+   * A broken config, or a model that cannot be resolved or authenticated, warns
+   * once — a typo must not be indistinguishable from the feature being off.
    */
   const warnOnce = (ctx: ExtensionContext, message: string) => {
     if (warned) return;
@@ -75,13 +86,13 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
     };
 
     const current = config();
-    if (!current) fail("no titling model configured");
+    if (!current) fail("invalid configuration");
 
-    const model = resolveTitlingModel(ctx.modelRegistry, current.model);
-    if (!model) fail(`model not found: ${current.model}`);
+    const model = selectTitlingModel(ctx.modelRegistry, current.model, ctx.model);
+    if (!model) fail(current.model ? `model not found: ${current.model}` : "no session model selected");
 
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok) fail(`authentication failed for ${current.model}: ${auth.error}`);
+    if (!auth.ok) fail(`authentication failed for ${modelLabel(ctx, current)}: ${auth.error}`);
 
     const branch = ctx.sessionManager.getBranch();
     const parts = mode === "initial" ? initialDialogue(branch) : recentWindow(branch);
@@ -98,7 +109,8 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
           headers: auth.headers,
           env: auth.env,
         }),
-      config: current,
+      thinkingLevel: titlingThinkingLevel(model, current.thinkingLevel),
+      maxLength: current.maxLength,
       parts,
       currentName,
       signal,
@@ -119,9 +131,9 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
       isEnabled,
       getCurrentName: () => pi.getSessionName(),
       setSessionName: (name) => pi.setSessionName(name),
-      // The controller must always latch a user rename so an unconfigured session
-      // that is later configured cannot overwrite it; the guard here ensures an
-      // unconfigured extension leaves no trace in the session file.
+      // The controller must always latch a user rename so a session that is later
+      // re-enabled cannot overwrite it; the guard here ensures an invalid
+      // configuration leaves no trace in the session file.
       appendMarker: (marker: TitleMarker) => {
         if (config()) pi.appendEntry(STATE_ENTRY_TYPE, marker);
       },
@@ -174,8 +186,8 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
         const marker = latestMarker(ctx.sessionManager.getBranch());
         ctx.ui.notify(
           [
-            `Model: ${current?.model ?? "(not configured)"}`,
-            `Resolves: ${current && resolveTitlingModel(ctx.modelRegistry, current.model) ? "yes" : "no"}`,
+            `Model: ${current ? modelLabel(ctx, current) : "(invalid configuration)"}`,
+            `Resolves: ${current && selectTitlingModel(ctx.modelRegistry, current.model, ctx.model) ? "yes" : "no"}`,
             `Automatic titling: ${isEnabled() ? "enabled" : "disabled"}`,
             `Current name: ${pi.getSessionName() ?? "(none)"}`,
             `Name source: ${marker ? marker.kind : pi.getSessionName() ? "unknown" : "(none)"}`,
@@ -202,8 +214,12 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
           configLine,
         ];
         if (current) {
-          const model = resolveTitlingModel(ctx.modelRegistry, current.model);
-          lines.push(`Model ${current.model}: ${model ? "found" : "NOT FOUND in registry"}`);
+          const model = selectTitlingModel(ctx.modelRegistry, current.model, ctx.model);
+          lines.push(`Model ${modelLabel(ctx, current)}: ${model ? "found" : "NOT FOUND"}`);
+          if (model) {
+            const level = titlingThinkingLevel(model, current.thinkingLevel);
+            lines.push(`Thinking level: ${level}${current.thinkingLevel ? "" : " (lowest supported)"}`);
+          }
           if (model) {
             const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
             lines.push(`Authentication: ${auth.ok ? "ok" : `failed — ${auth.error}`}`);
@@ -211,16 +227,6 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
             // when it is, every other line here still reads "ok".
             if (auth.ok) lines.push(`Endpoint: ${withResolvedEndpoint(model, auth.baseUrl).baseUrl}`);
           }
-        } else {
-          lines.push(
-            "",
-            "Example config:",
-            JSON.stringify(
-              { version: 1, model: "copilot/gpt-5-mini", thinkingLevel: "off", maxLength: 50 },
-              null,
-              2,
-            ),
-          );
         }
         ctx.ui.notify(lines.join("\n"), "info");
         return;
@@ -232,10 +238,7 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
       }
 
       if (!config()) {
-        ctx.ui.notify(
-          "session-title: no titling model configured. Run /title doctor for setup.",
-          "warning",
-        );
+        ctx.ui.notify("session-title: invalid configuration. Run /title doctor.", "warning");
         return;
       }
 

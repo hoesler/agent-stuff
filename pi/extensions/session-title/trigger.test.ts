@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveTitlingModel, shouldTitleOnSettle, withResolvedEndpoint } from "./trigger.ts";
+import {
+  resolveTitlingModel,
+  selectTitlingModel,
+  shouldTitleOnSettle,
+  withResolvedEndpoint,
+} from "./trigger.ts";
 
 const base = { hasUI: true, configured: true, enabled: true, titled: false };
 
@@ -69,4 +74,21 @@ test("resolving an endpoint does not mutate the registry's model", () => {
   const model = { id: "gpt-5.6-luna", baseUrl: "https://api.individual.githubcopilot.com" };
   withResolvedEndpoint(model, "https://copilot-api.company.ghe.com");
   assert.equal(model.baseUrl, "https://api.individual.githubcopilot.com");
+});
+
+test("selectTitlingModel uses the session model when none is configured", () => {
+  const session = { provider: "anthropic", id: "claude-opus-5-5" };
+  const registry = { find: () => ({ provider: "x", id: "y" }) };
+  assert.equal(selectTitlingModel(registry, undefined, session), session);
+});
+
+test("selectTitlingModel prefers the configured model over the session model", () => {
+  const configured = { provider: "copilot", id: "gpt-5-mini" };
+  const registry = { find: () => configured };
+  assert.equal(selectTitlingModel(registry, "copilot/gpt-5-mini", { provider: "a", id: "b" }), configured);
+});
+
+test("selectTitlingModel does not fall back when the configured model is missing", () => {
+  const registry = { find: () => undefined };
+  assert.equal(selectTitlingModel(registry, "copilot/typo", { provider: "a", id: "b" }), undefined);
 });

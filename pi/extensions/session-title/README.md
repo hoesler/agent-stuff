@@ -1,13 +1,14 @@
 # session-title
 
-Names pi sessions with a cheap, explicitly configured model, after the first
-user↔assistant exchange settles.
+Names pi sessions after the first user↔assistant exchange settles, using a
+configured model or, by default, the session model at its lowest thinking level.
 
 ## Configuration
 
-No titling model configured means the extension does nothing — automatic titling
-is opt-in and never spends tokens on your working model. Sources, lowest
-precedence first:
+No configuration is needed. Without a configured `model`, titling uses the
+session's current model at the lowest thinking level it supports (`off` where the
+model allows it). Configure a `model` to send titling to a cheaper one instead.
+Sources, lowest precedence first:
 
 1. `~/.pi/agent/session-title.json` (or `$PI_CODING_AGENT_DIR/session-title.json`)
 2. `.pi/session-title.json` in a trusted project — merged over the global file
@@ -28,14 +29,15 @@ precedence first:
 | field | default | meaning |
 | --- | --- | --- |
 | `version` | required | config format version; must be `1` |
-| `model` | required | `provider/modelId` of the titling model |
-| `thinkingLevel` | `"off"` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `model` | session model | `provider/modelId` of the titling model |
+| `thinkingLevel` | lowest supported | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `enabled` | `true` | automatic titling; `/title` works either way |
 | `maxLength` | `50` | character cap; `0` means unlimited |
 | `debug` | `false` | log titling decisions to stderr |
 
 Unknown properties are rejected, so a typo fails loudly. Files are re-read when
-they change — no restart needed.
+they change — no restart needed. A configured model that cannot be found is
+reported, never replaced by the session model.
 
 ## Commands
 
@@ -43,7 +45,7 @@ they change — no restart needed.
 | --- | --- |
 | `/title` | generate a name from the current conversation; overrides a manual name |
 | `/title status` | model, whether it resolves, enabled state, current name and its source |
-| `/title doctor` | config paths, parse errors, model resolution, authentication and the resolved endpoint |
+| `/title doctor` | config paths, parse errors, model resolution, thinking level, authentication and the resolved endpoint |
 | `/title on` / `/title off` | toggle automatic titling for this session only |
 
 ## Behavior
