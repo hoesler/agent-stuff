@@ -8,16 +8,8 @@ import {
   generateTitle,
   isUsableTitle,
 } from "./title.ts";
-import type { SessionTitleConfig } from "./types.ts";
 
-const config: SessionTitleConfig = {
-  version: 1,
-  model: "copilot/gpt-5-mini",
-  thinkingLevel: "off",
-  enabled: true,
-  maxLength: 50,
-  debug: false,
-};
+const config = { thinkingLevel: "off" as const, maxLength: 50 };
 
 const parts = [
   { role: "user" as const, text: "Rename pi sessions automatically" },
@@ -130,7 +122,7 @@ test("extractTitleText falls back to thinking blocks when text is empty", () => 
 test("generateTitle returns a cleaned title from the completion", async () => {
   const title = await generateTitle({
     complete: async () => assistantMessage([{ type: "text", text: '"Session titling extension"' }]),
-    config,
+    ...config,
     parts,
     currentName: undefined,
   });
@@ -144,7 +136,7 @@ test("generateTitle passes the model options through, omitting reasoning when of
       seen = options;
       return assistantMessage([{ type: "text", text: "Session titling extension" }]);
     },
-    config,
+    ...config,
     parts,
     currentName: undefined,
   });
@@ -160,7 +152,8 @@ test("generateTitle forwards a real thinking level as reasoning", async () => {
       seen = options;
       return assistantMessage([{ type: "text", text: "Session titling extension" }]);
     },
-    config: { ...config, thinkingLevel: "low" },
+    ...config,
+    thinkingLevel: "low",
     parts,
     currentName: undefined,
   });
@@ -172,7 +165,7 @@ test("generateTitle throws on a provider error result", async () => {
     generateTitle({
       complete: async () =>
         assistantMessage([], { stopReason: "error", errorMessage: "rate limited" }),
-      config,
+      ...config,
       parts,
       currentName: undefined,
     }),
@@ -184,7 +177,7 @@ test("generateTitle throws on empty content", async () => {
   await assert.rejects(
     generateTitle({
       complete: async () => assistantMessage([]),
-      config,
+      ...config,
       parts,
       currentName: undefined,
     }),
@@ -197,7 +190,7 @@ test("generateTitle throws when the candidate fails the quality gate", async () 
     generateTitle({
       complete: async () =>
         assistantMessage([{ type: "text", text: "Can you fix the auth bug?" }]),
-      config,
+      ...config,
       parts,
       currentName: undefined,
     }),
@@ -209,7 +202,7 @@ test("generateTitle throws when there is nothing to title", async () => {
   await assert.rejects(
     generateTitle({
       complete: async () => assistantMessage([{ type: "text", text: "x" }]),
-      config,
+      ...config,
       parts: [],
       currentName: undefined,
     }),
@@ -226,7 +219,7 @@ test("generateTitle honours an external abort signal", async () => {
         options.signal?.throwIfAborted();
         return assistantMessage([{ type: "text", text: "unused" }]);
       },
-      config,
+      ...config,
       parts,
       currentName: undefined,
       signal: controller.signal,

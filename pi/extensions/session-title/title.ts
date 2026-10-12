@@ -1,5 +1,5 @@
 import { stripNoise, type DialoguePart } from "./transcript.ts";
-import type { SessionTitleConfig } from "./types.ts";
+import type { ModelThinkingLevel } from "./types.ts";
 
 /**
  * A title needs only a few dozen tokens, but on reasoning models `maxTokens`
@@ -23,7 +23,9 @@ export type CompleteFn = (context: any, options: any) => Promise<any>;
 
 export interface GenerateOptions {
   complete: CompleteFn;
-  config: SessionTitleConfig;
+  /** Resolved against the titling model; never left to provider defaults. */
+  thinkingLevel: ModelThinkingLevel;
+  maxLength: number;
   parts: DialoguePart[];
   currentName: string | undefined;
   signal?: AbortSignal;
@@ -107,7 +109,7 @@ export function extractTitleText(message: any): string {
 }
 
 export async function generateTitle(options: GenerateOptions): Promise<string> {
-  const { complete, config, parts, currentName, signal } = options;
+  const { complete, thinkingLevel, maxLength, parts, currentName, signal } = options;
   if (parts.length === 0) throw new Error("no conversation to title");
 
   const timeout = AbortSignal.timeout(TITLE_TIMEOUT_MS);
@@ -119,11 +121,11 @@ export async function generateTitle(options: GenerateOptions): Promise<string> {
   };
   // pi-ai's ThinkingLevel has no "off" — that level is expressed by omitting
   // `reasoning` entirely.
-  if (config.thinkingLevel !== "off") streamOptions.reasoning = config.thinkingLevel;
+  if (thinkingLevel !== "off") streamOptions.reasoning = thinkingLevel;
 
   const result = await complete(
     {
-      systemPrompt: buildSystemPrompt(config.maxLength),
+      systemPrompt: buildSystemPrompt(maxLength),
       messages: [
         {
           role: "user",
@@ -142,8 +144,8 @@ export async function generateTitle(options: GenerateOptions): Promise<string> {
   const raw = extractTitleText(result);
   if (!raw) throw new Error("titling model returned empty content");
 
-  const cleaned = cleanTitle(raw, config.maxLength);
-  if (!isUsableTitle(cleaned, config.maxLength)) {
+  const cleaned = cleanTitle(raw, maxLength);
+  if (!isUsableTitle(cleaned, maxLength)) {
     throw new Error(`titling model returned an unusable title: ${JSON.stringify(cleaned)}`);
   }
   return cleaned;

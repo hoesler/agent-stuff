@@ -13,9 +13,10 @@ export type ModelThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface SessionTitleConfig {
   version: 1;
-  /** "provider/modelId" — the titling model. */
-  model: string;
-  thinkingLevel: ModelThinkingLevel;
+  /** "provider/modelId" — the titling model. Unset means the session model. */
+  model?: string;
+  /** Unset means the lowest level the titling model supports. */
+  thinkingLevel?: ModelThinkingLevel;
   enabled: boolean;
   /** Character cap on the title; 0 means unlimited. */
   maxLength: number;
@@ -23,11 +24,13 @@ export interface SessionTitleConfig {
 }
 
 export const DEFAULTS = {
-  thinkingLevel: "off",
   enabled: true,
   maxLength: 50,
   debug: false,
-} as const satisfies Omit<SessionTitleConfig, "version" | "model">;
+} as const satisfies Omit<SessionTitleConfig, "version" | "model" | "thinkingLevel">;
+
+/** The configuration in effect when no file exists. */
+export const DEFAULT_CONFIG: SessionTitleConfig = { version: 1, ...DEFAULTS };
 
 export interface ConfigError {
   path: string;
@@ -40,7 +43,7 @@ export type ConfigSnapshot =
       ok: false;
       paths: string[];
       fingerprint: string;
-      reason: "missing" | "invalid";
+      reason: "invalid";
       errors: ConfigError[];
     };
 

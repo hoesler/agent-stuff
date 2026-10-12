@@ -42,3 +42,16 @@ export function withResolvedEndpoint<TModel extends { baseUrl?: string }>(
 ): TModel {
   return baseUrl ? { ...model, baseUrl } : model;
 }
+
+/**
+ * The titling model: the configured one when set, else the session model. A
+ * configured model that does not resolve is not replaced by the session model —
+ * a typo must surface, not silently spend tokens on the working model.
+ */
+export function selectTitlingModel<TModel>(
+  registry: ModelLookup<TModel>,
+  configured: string | undefined,
+  sessionModel: TModel | undefined,
+): TModel | undefined {
+  return configured ? resolveTitlingModel(registry, configured) : sessionModel;
+}

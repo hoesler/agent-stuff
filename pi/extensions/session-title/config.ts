@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  DEFAULT_CONFIG,
   DEFAULTS,
   THINKING_LEVELS,
   type ConfigError,
@@ -71,8 +72,7 @@ function modelString(value: unknown, path: string): string {
   return trimmed;
 }
 
-function thinkingLevel(value: unknown, path: string, fallback: ModelThinkingLevel): ModelThinkingLevel {
-  if (value === undefined) return fallback;
+function thinkingLevel(value: unknown, path: string): ModelThinkingLevel {
   if (typeof value !== "string" || !THINKING_LEVELS.includes(value as ModelThinkingLevel)) {
     throw new Error(`${path}: expected one of ${THINKING_LEVELS.join(", ")}`);
   }
@@ -87,19 +87,26 @@ function maxLength(value: unknown, path: string, fallback: number): number {
   return value;
 }
 
-/** Strict parse of a complete (global or env) config file. Throws on any problem. */
+/**
+ * Strict parse of a complete (global or env) config file. Throws on any problem.
+ * `model` and `thinkingLevel` stay unset when omitted: they are resolved against
+ * the session model at titling time.
+ */
 export function parseConfig(value: unknown): SessionTitleConfig {
   const input = record(value, "root");
   rejectUnknown(input, "root");
   if (input.version !== 1) throw new Error("root.version: expected 1");
-  return {
+  const result: SessionTitleConfig = {
     version: 1,
-    model: modelString(input.model, "root.model"),
-    thinkingLevel: thinkingLevel(input.thinkingLevel, "root.thinkingLevel", DEFAULTS.thinkingLevel),
     enabled: optionalBoolean(input.enabled, "root.enabled", DEFAULTS.enabled),
     maxLength: maxLength(input.maxLength, "root.maxLength", DEFAULTS.maxLength),
     debug: optionalBoolean(input.debug, "root.debug", DEFAULTS.debug),
   };
+  if (input.model !== undefined) result.model = modelString(input.model, "root.model");
+  if (input.thinkingLevel !== undefined) {
+    result.thinkingLevel = thinkingLevel(input.thinkingLevel, "root.thinkingLevel");
+  }
+  return result;
 }
 
 /**
@@ -115,7 +122,7 @@ export function parseOverride(value: unknown): Partial<SessionTitleConfig> {
   const result: Partial<SessionTitleConfig> = {};
   if (input.model !== undefined) result.model = modelString(input.model, "root.model");
   if (input.thinkingLevel !== undefined) {
-    result.thinkingLevel = thinkingLevel(input.thinkingLevel, "root.thinkingLevel", DEFAULTS.thinkingLevel);
+    result.thinkingLevel = thinkingLevel(input.thinkingLevel, "root.thinkingLevel");
   }
   if (input.enabled !== undefined) {
     result.enabled = optionalBoolean(input.enabled, "root.enabled", DEFAULTS.enabled);
@@ -157,7 +164,7 @@ export class SessionTitleConfigLoader {
       ok: false,
       paths,
       fingerprint: "unread",
-      reason: "missing",
+      reason: "invalid",
       errors: [{ path: "root", message: "configuration has not been loaded" }],
     };
   }
@@ -194,13 +201,7 @@ export class SessionTitleConfigLoader {
       return this.current;
     }
     if (reads.length === 0) {
-      this.current = {
-        ok: false,
-        paths: this.paths,
-        fingerprint,
-        reason: "missing",
-        errors: [{ path: this.paths.join(", "), message: "no configuration file found" }],
-      };
+      this.current = { ok: true, paths: this.paths, fingerprint, config: DEFAULT_CONFIG };
       return this.current;
     }
 
