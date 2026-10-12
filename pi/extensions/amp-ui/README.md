@@ -8,8 +8,11 @@
 - **User messages.** Compact, with a bar in the current thinking level's color.
 - **Tool display.** Amp-style rendering for the built-in tools (read, grep,
   find, ls, bash, edit, write): compact headers, collapsed output previews, a
-  live bash spinner, colored edit diffs. Only the rendering changes; execution
-  and schemas are pi's own. Other tools, MCP included, keep pi's rendering.
+  live bash spinner, colored edit diffs. The renderers are registered with
+  `pi.registerToolRenderer()`, so the tools themselves are never re-registered:
+  whichever implementation is registered under these names keeps its
+  execution, schema and prompt text, and disabled tools stay disabled. Other
+  tools, MCP included, keep their own rendering. Needs pi 1.0.1 or later.
 - **Themes.** `amp-dark`, `amp-light` and `amp-gruvbox-dark-hard`, shipped in
   `pi/themes`. While an `amp-dark`/`amp-light` theme is active, it follows the
   device appearance.
@@ -26,6 +29,10 @@ Forked from [amp-themes](https://github.com/me-frankan/amp-themes) by Frank
   as a notification. Before, it landed raw at the cursor, inside the prompt box,
   and stuck there until that row was redrawn.
 - `amp-gruvbox-dark-hard` is kept, where upstream dropped it.
+- The built-in tools are no longer re-registered to swap their renderers. That
+  re-registration activated `grep`, `find` and `ls`, re-enabled tools turned
+  off with `--tools`, bound the tools to the cwd pi started in, and replaced any
+  other extension's version of these tools.
 - Packaging: the four upstream extensions load through one `index.ts`, the
   tests run on `node:test` instead of vitest, and parameter properties became
   plain fields so Node can strip the types.
@@ -33,9 +40,11 @@ Forked from [amp-themes](https://github.com/me-frankan/amp-themes) by Frank
 ## Install
 
 Remove `npm:amp-themes` first, from the packages in `~/.pi/agent/settings.json`
-or through `pi config`; both would register the same renderers. Also leave out
-`npm:pi-tool-display`, which overrides the same built-in tools. Then enable this
-extension for the `hoesler` package:
+or through `pi config`; both would draw the same tools. Packages that render
+the built-in tools differently, such as `npm:pi-tool-display`, are best left
+out too: amp-ui's renderers win over a tool's own, and between two renderer
+extensions the one loaded first wins. Then enable this extension for the
+`hoesler` package:
 
 ```
 +pi/extensions/amp-ui/index.ts
