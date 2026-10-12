@@ -8,11 +8,13 @@
 - **User messages.** Compact, with a bar in the current thinking level's color.
 - **Tool display.** Amp-style rendering for the built-in tools (read, grep,
   find, ls, bash, edit, write): compact headers, collapsed output previews, a
-  live bash spinner, colored edit diffs. The renderers are registered with
-  `pi.registerToolRenderer()`, so the tools themselves are never re-registered:
-  whichever implementation is registered under these names keeps its
-  execution, schema and prompt text, and disabled tools stay disabled. Other
-  tools, MCP included, keep their own rendering. Needs pi 1.0.1 or later.
+  live bash spinner that leaves the command's duration behind, colored edit
+  diffs. The renderers are registered with `pi.registerToolRenderer()`, so the
+  tools themselves are never re-registered: whichever implementation is
+  registered under these names keeps its execution, schema and prompt text, and
+  disabled tools stay disabled. Other tools, MCP included, keep their own
+  rendering. Needs pi 1.0.1 or later; the bash duration and edit's `outputPad`
+  need 1.1.0.
 - **Themes.** `amp-dark`, `amp-light` and `amp-gruvbox-dark-hard`, shipped in
   `pi/themes`. While an `amp-dark`/`amp-light` theme is active, it follows the
   device appearance.

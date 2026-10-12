@@ -4,6 +4,8 @@
  * - `renderBashCall`: a braille spinner + `$ <command>` header with optional
  *   `(timeout Ns)` and live `· <elapsed>` while the command is running. The
  *   spinner timer lives on `context.state` and is driven by `context.invalidate`.
+ *   Once the command finished, the elapsed time gives way to the recorded
+ *   `context.durationMs` (pi 1.1.0+), so it survives a session reload.
  * - `renderBashResult`: a status icon (✓/✗ from `context.isError`), the command
  *   output preview read from `result.content` (NOT details, per C2), and an
  *   optional warning-colored `[Full output: …. Truncated: …]` hint built from
@@ -34,15 +36,23 @@ import {
   statusIcon,
   stopSpinner,
   type AmpToolRenderContext,
+  type RenderTheme,
 } from "./amp-tool-render.ts";
 
 /** Lines of output shown in the collapsed bash result preview. */
 const BASH_PREVIEW_LINES = 10;
 
-/** Build the `$ <command>` header line, optionally prefixed by a spinner frame. */
-function buildBashCallText(
+/** Commands that finish faster than this show no duration. */
+const MIN_SHOWN_DURATION_MS = 1000;
+
+/**
+ * Build the `$ <command>` header line, optionally prefixed by a spinner frame.
+ * `elapsedMs` is the live time while the spinner runs, then the recorded
+ * duration once the command finished.
+ */
+export function buildBashCallText(
   args: BashToolInput,
-  theme: Theme,
+  theme: RenderTheme,
   spinnerFrame: string | undefined,
   elapsedMs: number | undefined,
 ): string {
@@ -54,11 +64,14 @@ function buildBashCallText(
   const timeoutSuffix =
     typeof args.timeout === "number" ? theme.fg("muted", ` (timeout ${args.timeout}s)`) : "";
   const elapsedSuffix =
-    spinnerFrame && elapsedMs !== undefined
-      ? theme.fg("muted", ` · ${formatElapsed(elapsedMs)}`)
-      : "";
+    elapsedMs !== undefined ? theme.fg("muted", ` · ${formatElapsed(elapsedMs)}`) : "";
   const prompt = theme.fg("toolTitle", theme.bold("$"));
   return `${spinnerPrefix}${prompt} ${theme.fg("accent", command)}${timeoutSuffix}${elapsedSuffix}`;
+}
+
+/** The recorded duration of a finished command, or undefined when too short to show. */
+function shownDuration(durationMs: number | undefined): number | undefined {
+  return durationMs !== undefined && durationMs >= MIN_SHOWN_DURATION_MS ? durationMs : undefined;
 }
 
 export function renderBashCall(
@@ -94,10 +107,11 @@ export function renderBashCall(
 
   const spinnerFrame =
     shouldSpin && spinnerState ? BASH_SPINNER_FRAMES[spinnerState.frameIndex] : undefined;
-  const elapsedMs =
-    shouldSpin && spinnerState?.startedAt !== undefined
+  const elapsedMs = shouldSpin
+    ? spinnerState?.startedAt !== undefined
       ? Date.now() - spinnerState.startedAt
-      : undefined;
+      : undefined
+    : shownDuration(context.durationMs);
   text.setText(buildBashCallText(args, theme, spinnerFrame, elapsedMs));
   return text;
 }

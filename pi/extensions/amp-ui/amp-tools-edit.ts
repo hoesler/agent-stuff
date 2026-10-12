@@ -67,15 +67,24 @@ function pushMoreHint(
 // edit
 // ---------------------------------------------------------------------------
 
+/**
+ * Horizontal padding for edit's components. Edit keeps `renderShell: "self"`,
+ * so no shell box pads it and it applies the outputPad setting itself. Before
+ * pi 1.1.0 there is no setting; 1 matches its default.
+ */
+function editPaddingX(context: AmpToolRenderContext): number {
+  return context.outputPad ?? 1;
+}
+
 export function renderEditCall(
   args: EditToolInput,
   theme: Theme,
-  _context: AmpToolRenderContext,
+  context: AmpToolRenderContext,
 ): Component {
   const path = shortenPath(args.path);
   const editCount = Array.isArray(args.edits) ? args.edits.length : 0;
   const suffix = editCount > 1 ? ` (${editCount} edits)` : "";
-  return new Text(buildHeaderLine(verbFor("edit"), path, suffix, theme));
+  return new Text(buildHeaderLine(verbFor("edit"), path, suffix, theme), editPaddingX(context));
 }
 
 /**
@@ -110,13 +119,16 @@ export function renderEditResult(
   result: AgentToolResult<EditToolDetails | undefined>,
   options: ToolRenderResultOptions,
   theme: Theme,
-  _context: AmpToolRenderContext,
+  context: AmpToolRenderContext,
 ): Component {
   const hasDiff = typeof result.details?.diff === "string" && result.details.diff.length > 0;
   // Prefer the tool's display diff; `renderDiff` returns a colored ANSI string
   // and IGNORES its options arg, so we collapse it caller-side (brief R2).
   const colored = hasDiff ? renderDiff(result.details!.diff) : extractTextOutput(result);
-  return new Text(buildEditResultText(colored, hasDiff, options, theme, expandHint()));
+  return new Text(
+    buildEditResultText(colored, hasDiff, options, theme, expandHint()),
+    editPaddingX(context),
+  );
 }
 
 // ---------------------------------------------------------------------------

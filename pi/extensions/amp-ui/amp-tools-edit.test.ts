@@ -11,9 +11,9 @@
  */
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { buildEditResultText, buildWriteResultText } from "./amp-tools-edit.ts";
-import type { RenderTheme } from "./amp-tool-render.ts";
+import { initTheme, type Theme, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { buildEditResultText, buildWriteResultText, renderEditCall, renderEditResult } from "./amp-tools-edit.ts";
+import type { AmpToolRenderContext, RenderTheme } from "./amp-tool-render.ts";
 
 /** Theme stub that tags output so assertions can see which color was applied. */
 const theme: RenderTheme = {
@@ -110,5 +110,39 @@ describe("buildWriteResultText", () => {
     assert.ok(!out.includes("row 9"));
     // write mirrors Pi's hint, which also reports the file's total line count.
     assert.ok(out.includes("(4 more lines, 12 total)"));
+  });
+});
+
+describe("edit padding", () => {
+  // The result's expand hint reads pi's global theme.
+  initTheme("dark", false);
+
+  function context(outputPad: number | undefined): AmpToolRenderContext {
+    return {
+      args: { path: "a.ts", edits: [] },
+      state: {},
+      executionStarted: true,
+      isPartial: false,
+      isError: false,
+      invalidate: () => {},
+      outputPad,
+    };
+  }
+
+  /** Columns before the first visible character of a rendered component. */
+  function indent(component: { render(width: number): string[] }): number {
+    const line = component.render(80).find((l) => l.trim().length > 0) ?? "";
+    return line.length - line.trimStart().length;
+  }
+
+  test("applies the outputPad setting, since edit draws its own shell", () => {
+    const args = { path: "a.ts", edits: [] };
+    const result = { content: [{ type: "text" as const, text: "ok" }], details: undefined };
+    assert.equal(indent(renderEditCall(args, theme as Theme, context(3))), 3);
+    assert.equal(indent(renderEditResult(result, collapsed, theme as Theme, context(3))), 3);
+  });
+
+  test("falls back to one column before pi 1.1.0", () => {
+    assert.equal(indent(renderEditCall({ path: "a.ts", edits: [] }, theme as Theme, context(undefined))), 1);
   });
 });

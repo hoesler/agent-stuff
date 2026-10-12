@@ -55,6 +55,10 @@ export interface AmpToolRenderContext {
   isError: boolean;
   /** Invalidate just this tool execution component for redraw. */
   invalidate: () => void;
+  /** Recorded execution time of the final result (pi 1.1.0+); undefined while running. */
+  durationMs?: number | undefined;
+  /** Horizontal padding from the outputPad setting (pi 1.1.0+); `renderShell: "self"` renderers apply it. */
+  outputPad?: number;
 }
 
 // ---------------------------------------------------------------------------
