@@ -22,6 +22,9 @@ Forked from [amp-themes](https://github.com/me-frankan/amp-themes) by Frank
 - Third-party extensions can prepend a status label to the model row (see
   below). The chrome hides pi's footer, so `ctx.ui.setStatus()` never shows.
 - The context-window usage is back in the top-left corner.
+- Console output from other extensions (e.g. pi-web-access's `gh` hint) shows
+  as a notification. Before, it landed raw at the cursor, inside the prompt box,
+  and stuck there until that row was redrawn.
 - `amp-gruvbox-dark-hard` is kept, where upstream dropped it.
 - Packaging: the four upstream extensions load through one `index.ts`, the
   tests run on `node:test` instead of vitest, and parameter properties became

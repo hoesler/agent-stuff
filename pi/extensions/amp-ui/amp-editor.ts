@@ -1,6 +1,7 @@
 import { CustomEditor, type ExtensionAPI, type ExtensionContext, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { BUILTIN_COMMAND_PALETTE_ITEMS, CommandPaletteOverlay, type CommandPaletteItem, type CommandPaletteResult, stripAnsi } from "./amp-command-palette.ts";
+import { captureConsole, type ConsoleLike } from "./amp-console.ts";
 import { collectAmpEditorStatusLabel } from "./amp-editor-status-hooks.ts";
 import { thinkingColorFor } from "./amp-thinking.ts";
 import { execFileSync } from "node:child_process";
@@ -343,6 +344,11 @@ export default function (pi: ExtensionAPI) {
   let workingMessage = WORKING_WAITING;
   let workingFrameIndex = 0;
   let workingTimer: ReturnType<typeof setInterval> | undefined;
+  let restoreConsole: (() => void) | undefined;
+
+  // Pi stops the TUI before printing a crash report, which must reach the
+  // terminal. `stopped` is protected on TUI, hence the cast.
+  const tuiRunning = () => activeTui !== undefined && !(activeTui as { stopped?: boolean }).stopped;
 
   const requestRender = () => activeTui?.requestRender();
 
@@ -416,6 +422,9 @@ export default function (pi: ExtensionAPI) {
 
     hideBuiltInWorking(ctx);
 
+    restoreConsole?.();
+    restoreConsole = captureConsole(console as unknown as ConsoleLike, tuiRunning, (message, type) => ctx.ui.notify(message, type));
+
     ctx.ui.setFooter(() => ({
       invalidate() {},
       render() {
@@ -485,6 +494,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     stopWorkingTimer();
+    restoreConsole?.();
+    restoreConsole = undefined;
     activeTui = undefined;
   });
 }
