@@ -39,29 +39,38 @@ pstack's `Task` spawns map to a subagent tool that takes a persona and a model, 
 
 ## Models
 
-pstack picks a model per role, such as `feature, refactoring` or `judgment and prose`. The role lines live in `~/.pi/agent/pstack-models.md`, the pi replacement for `pstack-models.mdc`. The pstack extension appends that file to the system prompt each turn, so its role lines are already in context. If they are not, read the file.
+pstack sets `model` on every subagent it spawns, chosen by role, such as `feature, refactoring` or `judgment and prose`. Upstream reads each role's model from `pstack-models.mdc`. pi has no role file. You choose each spawn's model from the agent modes in your system prompt, and you use the `oracle` route where pstack wants a model different from yours.
+
+**Modes.** When your system prompt has an "Available agent modes" list, each line starts with a `provider/model:thinkingLevel` string and ends with a description. For each spawn, pick the mode whose description fits the role and the job, and pass its string as `model`, verbatim. Never pass a mode id. With no mode list, omit `model` for every role, so children run on your own model, and say so once.
+
+**Oracle.** `oracle` is a route key for a model deliberately different from the one you run on. It is active when your system prompt lists it under Routes, or when an `oracle` tool is active. Pass `model: "oracle"` to `subagent`, unchanged. When it is not active, take the seat from the modes and say that it shares your family.
+
+| Role | Mode to pick |
+| --- | --- |
+| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `how explorer`, `why investigators`, `reflect tooling`, `swarm workers` | A capable mode for code that is not the most expensive. Trivial mechanical edits take a cheaper one. |
+| `judgment and prose`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer` | A strong reasoning mode. |
+| `hardest tasks` | The strongest mode. |
+| `arena runners`, `architect runners`, `interrogate reviewers` | A panel, below. |
+| `arena cross-judge pool`, and any step that asks for a different model family from yours, such as show-me-your-work's reviewer | `oracle`. |
 
 | Cursor | pi |
 | --- | --- |
-| The `pstack-models.mdc` rule, `~/.cursor/rules/pstack-models.mdc` | `~/.pi/agent/pstack-models.md`. Plain Markdown, no frontmatter, same role lines. |
-| A role value | Pass it as `model` unchanged. It is a `provider/model[:thinkingLevel]` reference or a route key. |
-| `inherit-parent` or `auto` | Omit `model`, so the child runs on pi's default model. |
-| A default slug in a skill (`claude-` or `grok-` or `gpt-` followed by a version) | Use the role's line. With no role file, or no line for that role, omit `model` for every role and say so once. Never turn a Cursor slug into a provider string by guessing. |
-| Raise or lower the effort | Change the `:thinkingLevel` suffix on the ladder `off` < `minimal` < `low` < `medium` < `high` < `xhigh` < `max`. Add the suffix when the value has none. pi clamps a level the model does not support. A route key has no suffix to change, so keep it as it is. |
-| `-fast` | Drop it. pi has no speed variant. |
-| A diverse panel (arena runners, architect runners, interrogate reviewers, arena cross-judge pool) | One spawn per entry, each with that entry as `model`. The family of a model is its id without the provider and without the version or size, so `anthropic/claude-opus-5-5` and `github-copilot/claude-sonnet-5` are both `claude`. Keep panels diverse by family. |
+| The `pstack-models.mdc` rule, `~/.cursor/rules/pstack-models.mdc`, a role's line | There is none. "Use the role's line" means: pick a mode for that role from the table above. A step that would read or check the rule does not apply. |
+| A default slug in a skill (`claude-` or `grok-` or `gpt-` followed by a version) | Only a hint at the kind of work: upstream puts Claude on judgment and Grok on code. Pick a mode by the role table. Never turn a Cursor slug into a provider string by guessing. |
+| `inherit-parent` or `auto` | Omit `model`, so the child runs on your model. |
+| Raise or lower the effort, `xhigh`, `max`, the `/setup-pstack` budget | Pick a stronger or a cheaper mode, judged by the descriptions. The order of the mode list means nothing. When modes of the role's family exist at the level you want, prefer one, so a panel stays diverse. |
+| `-fast` | Drop it. For urgent work, prefer a faster mode. |
+| The Task tool rejects a slug | When `subagent` fails on a model, run that spawn once more without `model` and say so. |
+| A diverse panel (arena runners, architect runners, interrogate reviewers) | One spawn per seat. Upstream's panels have two seats unless the skill asks for more. Put one seat on `oracle` and the others on modes, choosing modes of different families where the list has them. The family of a model is its id without the provider and without the version or size, so `anthropic/claude-opus-5-5` and `github-copilot/claude-sonnet-5` are both `claude`. When every seat shares a family, say so. |
 
 ## setup-pstack
 
-Follow the skill's steps with these changes.
+pstack keeps no model configuration in pi. The models come from agent modes and the `oracle` route, which belong to their own extension and config. Replace steps 1 to 6 with the steps below, then do steps 7 and 8 as written.
 
-- **Detect.** Run `pi --list-models` with `bash` and take each `provider/model` pair it prints. A model whose `thinking` column says `yes` takes a `:thinkingLevel` suffix. If `~/.pi/agent/agent-modes.json` exists (or the file `PI_AGENT_MODES_CONFIG` names), read its `modes` and offer each one as a choice labelled with its `id`, whose value is `<provider>/<model>:<thinkingLevel>`. Never write a mode id into the role file. If nothing can be detected, ask the user to paste the models they use.
-- **Starting table.** With no role file, ask for two picks first: a judgment model and a code model, preferably from different families. Fill every role from step 5's shape, putting the judgment pick where it shows `claude-opus-5-5-xhigh` and the code pick where it shows `grok-4.7-xhigh-fast`. A panel line gets one entry for each. Then apply the budget.
-- **Budget.** The budget sets each real value's `:thinkingLevel`: `unlimited` is `max`, `large` is `xhigh`, `medium` is `high`, `small` is `medium`. A model without thinking gets no suffix. Route keys, `inherit-parent`, and `auto` do not change.
-- **Confirm.** When every entry in a panel line has the same family, say so and offer to change one entry.
-- **Validate.** Every `provider/model` written must be one that step 1 detected. A route key passes when the user typed it.
-- **Write.** Write `~/.pi/agent/pstack-models.md` with no frontmatter: the comment lines, the `# budget` line, and one line per role from step 5. Overwrite the whole file. Never put the role lines in `AGENTS.md`. The file applies from the next turn, not only to new sessions.
-- **Personas.** After the role file, copy every file in `<pstack>/agents/` to `~/.pi/agent/agents/`. When a file of that name already exists and differs, show the diff and ask before overwriting it. Skip files that are already identical. Then tell the user to run `/reload`, or start a new session, so the subagent catalog lists them.
+- **Modes.** If your system prompt lists agent modes, show the user which mode you would pick for each row of the role table in Models, and ask whether that matches what they want. To change which model a mode or route means, the user edits their agent-modes config. If there is no mode list, say that every pstack subagent will run on the parent's model, and that agent modes with `"exposeCatalogInSystemPrompt": true` give each role its own model. `/mode init` drafts that config.
+- **Oracle.** If `oracle` is not active, say that panels, the arena cross-judge, and other cross-family checks will run on one family until the user adds an `oracle` route to their agent-modes config.
+- **Never write** agent-modes config, a pstack role file, or role lines in `AGENTS.md`. Agent modes and routes belong to the user.
+- **Personas.** Copy every file in `<pstack>/agents/` to `~/.pi/agent/agents/`. When a file of that name already exists and differs, show the diff and ask before overwriting it. Skip files that are already identical. Then tell the user to run `/reload`, or start a new session, so the subagent catalog lists them.
 
 ## Paths
 

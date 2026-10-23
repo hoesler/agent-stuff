@@ -18,18 +18,23 @@ The package does not list `pi/pstack/skills` in `pi.skills`, so pi registers non
 - **`/poteto-mode <task>`**, **`/poteto-help <question>`**, and **`/setup-pstack`**, the same as `/pstack <name> …`. These three keep their own commands because upstream's docs name them and a newcomer needs them before knowing `/pstack`.
 - **`/pstack <skill> [task]`** runs any pstack skill. It completes skill names, reads the skill's `SKILL.md`, and sends it the way pi's own `/skill:` expansion does.
 - **The install path.** Every turn's system prompt says where `pi/pstack/` is. The adapter and the personas call it `<pstack>`. The path comes from the extension's own location, so it stays right when the package moves or updates, and a subagent child, which loads the same package, sees it too.
-- **The role lines.** When `~/.pi/agent/pstack-models.md` exists, it is appended to every turn's system prompt, the way Cursor always applies `pstack-models.mdc`. Without it, the prompt says every role runs on the parent's model. The prompt also says that pstack's skills are absent from the skill list and where to read them, so a request like "configure pstack models" still finds `setup-pstack`.
+- **Where the skills are.** The prompt also says that pstack's skills are absent from the skill list and where to read them, so a request like "set up pstack" still finds `setup-pstack`.
+
+## Models
+
+pstack sets a model on every subagent it spawns, chosen by role. Upstream keeps those choices in a Cursor rule, `pstack-models.mdc`. The pi port keeps none. The orchestrating agent picks a mode for each spawn from the [`agent-modes`](../agent-modes) list in its system prompt, judging by the role and the job, and uses the `oracle` route where pstack asks for a model family other than its own: one seat of each panel, the arena cross-judge, and show-me-your-work's reviewer. The adapter's Models section has the role table.
+
+Nothing couples the extensions. pstack reads the mode list as text, and passes `oracle` to `subagent` as a route key, which `subagent` resolves through the contract `agent-modes` publishes. Without a mode list every subagent runs on the parent's model. Without an `oracle` route, panels stay on one family and the agent says so.
 
 ## Setup
 
-Run `/setup-pstack` once. It follows upstream's steps with the adapter's changes:
+Run `/setup-pstack` once. In pi it replaces upstream's model steps:
 
-1. It detects models with `pi --list-models`. With [`agent-modes`](../agent-modes) configured, it also offers each mode, and writes the mode's `provider/model:thinkingLevel`, never its id.
-2. With no role file yet, it asks for a judgment model and a code model and fills upstream's default table with them: the judgment pick where upstream has Claude Opus, the code pick where it has Grok.
-3. The budget sets each value's `:thinkingLevel`. It warns when a panel (arena, architect, interrogate) has only one model family.
-4. It writes `~/.pi/agent/pstack-models.md` and copies the four personas (`poteto-agent`, `comment-sicko`, `pstack-general`, `pstack-readonly`) into `~/.pi/agent/agents/`, showing the diff before it overwrites one you changed.
+1. It shows which mode it would pick for each role and asks whether that fits. To change what a mode or route means, edit your agent-modes config. Without a mode list, it says how to turn one on (`"exposeCatalogInSystemPrompt": true`, or `/mode init` to draft a config).
+2. It says when `oracle` is missing.
+3. It copies the four personas (`poteto-agent`, `comment-sicko`, `pstack-general`, `pstack-readonly`) into `~/.pi/agent/agents/`, showing the diff before it overwrites one you changed.
 
-Run `/reload` afterwards so the subagent catalog lists the personas.
+It never writes agent-modes config. Run `/reload` afterwards so the subagent catalog lists the personas.
 
 ## Optional companions
 
@@ -40,7 +45,7 @@ pstack runs with none of these. Each makes a step better when it is active, and 
 | Subagents with a persona and a model | [`subagent`](../subagent) | Steps run inline. |
 | Structured questions | `@juicesharp/rpiv-ask-user-question` | Questions in plain text. |
 | A todo list | `todo` from `mitsuhiko/agent-stuff` | The checklist lives in the reply. |
-| Named models | [`agent-modes`](../agent-modes) | Setup offers `pi --list-models` only. |
+| Agent modes and the `oracle` route | [`agent-modes`](../agent-modes) | Subagents run on the parent's model. Panels stay on one family. |
 | Past sessions | [`session-search`](../session-search) | The agent reads session JSONL directly. |
 
 Cursor Automations, Bugbot, and cloud agents have no pi equivalent. Steps that need them print `Skipped in pi: <step>. <reason>.` and the run goes on.

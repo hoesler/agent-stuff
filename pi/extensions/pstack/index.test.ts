@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -33,19 +31,6 @@ function harness(options: { idle?: boolean } = {}) {
     complete: (prefix: string) => commands.get("pstack")!.getArgumentCompletions!(prefix),
     beforeAgentStart: (systemPrompt: string) => events.get("before_agent_start")!({ systemPrompt }, ctx),
   };
-}
-
-async function withAgentDir<T>(models: string | undefined, body: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "pstack-"));
-  if (models !== undefined) await writeFile(join(dir, "pstack-models.md"), models);
-  const previous = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = dir;
-  try {
-    return await body(dir);
-  } finally {
-    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = previous;
-  }
 }
 
 test("the extension finds the pstack tree the package ships", () => {
@@ -107,20 +92,11 @@ test("/pstack completes skill names until the task begins", () => {
   assert.equal(h.complete("zzz"), null);
 });
 
-test("every turn's system prompt names the pstack path and carries the role lines", async () => {
-  await withAgentDir("# budget: large (xhigh)\nbug-fix: openai/gpt-5.6:xhigh\n", async (dir) => {
-    const { systemPrompt } = await harness().beforeAgentStart("BASE");
-    assert.ok(systemPrompt.startsWith("BASE\n\n## pstack\n"));
-    assert.ok(systemPrompt.includes(`pstack is installed at ${root}.`));
-    assert.ok(systemPrompt.includes(join(root, "docs", "harness", "pi.md")));
-    assert.ok(systemPrompt.includes(`### pstack role models (${join(dir, "pstack-models.md")})\n\n# budget: large (xhigh)\nbug-fix: openai/gpt-5.6:xhigh`));
-  });
-});
-
-test("without a role file the prompt says every role inherits the parent model", async () => {
-  await withAgentDir(undefined, async () => {
-    const { systemPrompt } = await harness().beforeAgentStart("BASE");
-    assert.match(systemPrompt, /No pstack role file exists at .*, so every pstack role runs on `inherit-parent`/);
-    assert.doesNotMatch(systemPrompt, /role models/);
-  });
+test("every turn's system prompt names the pstack path and the adapter", async () => {
+  const { systemPrompt } = await harness().beforeAgentStart("BASE");
+  assert.ok(systemPrompt.startsWith("BASE\n\n## pstack\n"));
+  assert.ok(systemPrompt.includes(`pstack is installed at ${root}.`));
+  assert.ok(systemPrompt.includes(join(root, "docs", "harness", "pi.md")));
+  assert.match(systemPrompt, /`setup-pstack`/);
+  assert.doesNotMatch(systemPrompt, /pstack-models|role models/);
 });

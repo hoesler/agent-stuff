@@ -8,27 +8,17 @@ export function pstackRoot(moduleUrl: string): string {
   return join(dirname(fileURLToPath(moduleUrl)), "..", "..", "pstack");
 }
 
-/**
- * What every turn's system prompt carries for pstack: where it is installed, and the role lines.
- * The role lines are what Cursor's always-applied `pstack-models.mdc` rule puts in context.
- */
-export function pstackPrompt(root: string, modelsPath: string, models: string | undefined): string {
-  const lines = [
+/** What every turn's system prompt carries for pstack: where it is installed, and where its skills are. */
+export function pstackPrompt(root: string): string {
+  return [
     "## pstack",
     "",
     `pstack is installed at ${root}. In pstack skills, personas, and docs, \`<pstack>\` means this folder. ` +
       `Before you follow a pstack skill or persona, read ${join(root, "docs", "harness", "pi.md")} once per session. It maps pstack's Cursor names to pi.`,
     "",
     `pstack's skills are not in the skill list. To use one, read ${join(root, "skills", "<name>", "SKILL.md")}. ` +
-      "For configuring pstack's models or budget, that is `setup-pstack`.",
-    "",
-  ];
-  if (models?.trim()) {
-    lines.push(`### pstack role models (${modelsPath})`, "", models.trim());
-  } else {
-    lines.push(`No pstack role file exists at ${modelsPath}, so every pstack role runs on \`inherit-parent\`. \`/setup-pstack\` writes one.`);
-  }
-  return lines.join("\n");
+      "For setting up pstack, including which models its subagents use, that is `setup-pstack`.",
+  ].join("\n");
 }
 
 /** `/pstack <skill> <task>` splits at the first whitespace. */
