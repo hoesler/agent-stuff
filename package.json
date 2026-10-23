@@ -19,7 +19,8 @@
       "./pi/extensions"
     ],
     "skills": [
-      "./skills"
+      "./skills",
+      "./pi/pstack/skills"
     ],
     "themes": [
       "./pi/themes"
@@ -44,7 +45,8 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
-    "test": "node --test pi/extensions/agent-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts pi/extensions/copilot-model-limits/*.test.ts pi/extensions/herdr-blocked/*.test.ts pi/extensions/ghostty-title/*.test.ts pi/extensions/amp-ui/*.test.ts",
+    "test": "node --test pi/extensions/agent-modes/*.test.ts pi/extensions/session-title/*.test.ts pi/extensions/subagent/*.test.ts pi/extensions/session-search/*.test.ts pi/extensions/tool-catalog/*.test.ts pi/extensions/hunk/*.test.ts pi/extensions/copilot-model-limits/*.test.ts pi/extensions/herdr-blocked/*.test.ts pi/extensions/ghostty-title/*.test.ts pi/extensions/amp-ui/*.test.ts pi/extensions/pstack/*.test.ts scripts/*.test.mjs",
+    "pstack": "node scripts/generate-pstack.mjs",
     "typecheck": "tsc -p tsconfig.json"
   }
 }

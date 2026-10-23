@@ -25,6 +25,7 @@ Pi loads everything the package declares. Use `pi config` to enable or disable i
 | [`copilot-model-limits`](pi/extensions/copilot-model-limits) | Refreshes the context-window and max-output limits pi holds for Copilot models with the ones the Copilot API reports for your account. Limits only: which models you may use is pi's own job since 0.85. |
 | [`ghostty-title`](pi/extensions/ghostty-title) | Ghostty window title and progress bar: project, session and model in the title, a spinner and pulsing progress bar while the agent works. The spinner pauses while a prompt waits on you, so the title holds still. Forked from [pi-ghostty](https://github.com/HazAT/pi-ghostty). |
 | [`amp-ui`](pi/extensions/amp-ui) | Amp-inspired UI: rounded editor chrome with model, thinking level, context usage and working status on its borders, compact user messages, and Amp-style rendering for the built-in tools. Ships `amp-dark`, `amp-light` and `amp-gruvbox-dark-hard` themes, and follows the device appearance. Forked from [amp-themes](https://github.com/me-frankan/amp-themes). |
+| [`pstack`](pi/extensions/pstack) | Runs [pstack](https://github.com/cursor/plugins/tree/main/pstack), poteto's engineering skills, in pi. `/poteto-mode <task>` picks a playbook and runs it, and `/setup-pstack` sets a model per role. The skills are generated from upstream into `pi/pstack` and mapped to pi by a hand-written adapter. |
 
 Each extension documents its own configuration in its README.
 
@@ -37,6 +38,8 @@ Themes live in `pi/themes`.
 - `architectural-decision-records` — turn an architecture discussion into lightweight ADRs, and find the decisions nobody wrote down
 - `creating-github-pull-requests` — open a pull request the way this repo expects
 - `python-architecture-patterns` — patterns for designing, writing, and reviewing Python code
+
+`pi/pstack/skills` holds pstack's 57 skills, generated from upstream by `npm run pstack`. All but `setup-pstack` are hidden from the model's catalog. See the [`pstack`](pi/extensions/pstack) extension.
 
 ## Rules
 
