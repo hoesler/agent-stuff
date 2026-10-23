@@ -10,7 +10,7 @@ This file names capabilities, not extensions. Where a row says "a todo tool" or 
 | --- | --- |
 | `AskQuestion` | A structured-question tool if one is active, such as `ask_user_question` from `@juicesharp/rpiv-ask-user-question` (1 to 4 questions, 2 to 4 options each, free-text answer always allowed). Otherwise ask in plain text, list the same options, and stop for the answer. |
 | Open a todolist | A todo tool if one is active, such as `todo` from `mitsuhiko/agent-stuff`. Otherwise keep the checklist in your reply, as a Markdown task list, and repeat it with updated marks whenever a step finishes. Never write a todo file into the user's repo yourself. |
-| Run another pstack skill (`/name` or "the **name** skill") | `read` `<pstack>/skills/<name>/SKILL.md` and follow it. Relative paths inside it resolve against its own folder. Most pstack skills are hidden from the model's skill list, so a missing catalog entry does not mean the skill is absent. When you tell the user to type it, write `/skill:<name>`, or `/poteto-mode` for poteto-mode. |
+| Run another pstack skill (`/name` or "the **name** skill") | `read` `<pstack>/skills/<name>/SKILL.md` and follow it. Relative paths inside it resolve against its own folder. pi does not load pstack's skills, so none of them is in the skill list and a missing catalog entry does not mean the skill is absent. When you tell the user to type it, write `/pstack <name>`, or `/poteto-mode`, `/poteto-help`, or `/setup-pstack` for those three. |
 | `Grep`, `Glob`, `Read` | `grep`, `find`, and `read` when the session offers them. Otherwise `bash` with `rg`, `fd` or `find`, and `cat`/`sed -n`. |
 | `Shell` | `bash`. |
 

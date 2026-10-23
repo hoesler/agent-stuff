@@ -1,18 +1,24 @@
 /**
  * pstack — run poteto's pstack skills in pi.
  *
- * The skills themselves are generated into `pi/pstack` by `scripts/generate-pstack.mjs`
- * and loaded through the package's `pi.skills`. This extension adds what a skill
- * file cannot: `/poteto-mode <task>`, the installed pstack path, and the role
- * lines from `pstack-models.md`, on every turn.
+ * The skills are generated into `pi/pstack` by `scripts/generate-pstack.mjs`. pi does not
+ * load them as skills: 57 `/skill:` commands and generic names like `tdd` would crowd the
+ * command list, and pstack reaches its own skills by path. This extension adds
+ * `/poteto-mode`, `/poteto-help`, `/setup-pstack`, `/pstack <skill> <task>`, and, on every turn, the installed pstack
+ * path and the role lines from `pstack-models.md`.
  */
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pstackPrompt, pstackRoot, skillBlock, skillCommand } from "./pstack.ts";
+import { getAgentDir, loadSkillsFromDir, type ExtensionAPI, type ExtensionCommandContext, type Skill } from "@earendil-works/pi-coding-agent";
+import { pstackPrompt, pstackRoot, skillBlock, skillCompletions, splitSkillArgs } from "./pstack.ts";
 
-const SKILL = "poteto-mode";
+/** The skills a newcomer needs before they know `/pstack`, under the names upstream's docs use. */
+const SHORTCUTS: Record<string, string> = {
+  "poteto-mode": "Work in poteto's pstack style: pick a playbook for <task> and run it",
+  "poteto-help": "Ask how to set up pstack or which skill, playbook, or principle fits a task",
+  "setup-pstack": "Choose which models pstack uses per role, and at what reasoning budget",
+};
 
 async function readIfPresent(path: string): Promise<string | undefined> {
   try {
@@ -24,22 +30,33 @@ async function readIfPresent(path: string): Promise<string | undefined> {
 
 export default function pstackExtension(pi: ExtensionAPI): void {
   const root = pstackRoot(import.meta.url);
+  let skills: Skill[] | undefined;
+  const loadSkills = () => (skills ??= loadSkillsFromDir({ dir: join(root, "skills"), source: "pstack" }).skills);
 
-  pi.registerCommand(SKILL, {
-    description: "Work in poteto's pstack style: pick a playbook for <task> and run it",
+  async function runSkill(name: string, task: string, ctx: ExtensionCommandContext): Promise<void> {
+    const skill = loadSkills().find((candidate) => candidate.name === name);
+    const content = skill && (await readIfPresent(skill.filePath));
+    if (!skill || content === undefined) {
+      ctx.ui.notify(`pstack: no skill named ${name} in ${join(root, "skills")}`, "error");
+      return;
+    }
+    pi.sendUserMessage(skillBlock(skill.name, skill.filePath, content, task), { deliverAs: ctx.isIdle() ? undefined : "followUp" });
+  }
+
+  for (const [name, description] of Object.entries(SHORTCUTS)) {
+    pi.registerCommand(name, { description, handler: (args, ctx) => runSkill(name, args.trim(), ctx) });
+  }
+
+  pi.registerCommand("pstack", {
+    description: "Run a pstack skill: /pstack <skill> [task]",
+    getArgumentCompletions: (prefix) => skillCompletions(loadSkills(), prefix),
     handler: async (args, ctx) => {
-      const deliverAs = ctx.isIdle() ? undefined : "followUp";
-      if (pi.getCommands().some((command) => command.name === `skill:${SKILL}`)) {
-        pi.sendUserMessage(skillCommand(SKILL, args), { expandPromptTemplates: true, deliverAs });
+      const { name, task } = splitSkillArgs(args);
+      if (!name) {
+        ctx.ui.notify("Usage: /pstack <skill> [task]", "warning");
         return;
       }
-      const filePath = join(root, "skills", SKILL, "SKILL.md");
-      const content = await readIfPresent(filePath);
-      if (content === undefined) {
-        ctx.ui.notify(`pstack: ${filePath} is missing`, "error");
-        return;
-      }
-      pi.sendUserMessage(skillBlock(SKILL, filePath, content, args), { deliverAs });
+      await runSkill(name, task, ctx);
     },
   });
 

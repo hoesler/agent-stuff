@@ -19,8 +19,7 @@
       "./pi/extensions"
     ],
     "skills": [
-      "./skills",
-      "./pi/pstack/skills"
+      "./skills"
     ],
     "themes": [
       "./pi/themes"
