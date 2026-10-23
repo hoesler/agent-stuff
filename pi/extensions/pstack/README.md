@@ -30,11 +30,13 @@ Nothing couples the extensions. pstack reads the mode list as text, and passes `
 
 Run `/setup-pstack` once. In pi it replaces upstream's model steps:
 
-1. It shows which mode it would pick for each role and asks whether that fits. To change what a mode or route means, edit your agent-modes config. Without a mode list, it says how to turn one on (`"exposeCatalogInSystemPrompt": true`, or `/mode init` to draft a config).
+1. It checks that your modes can serve pstack's roles, and names the gaps: nothing cheap enough for code delegates, nothing strong enough for judgment, or only one model family. To change what a mode or route means, edit your agent-modes config. Without a mode list, it says how to turn one on (`"exposeCatalogInSystemPrompt": true`, or `/mode init` to draft a config).
 2. It says when `oracle` is missing.
 3. It copies the four personas (`poteto-agent`, `comment-sicko`, `pstack-general`, `pstack-readonly`) into `~/.pi/agent/agents/`, showing the diff before it overwrites one you changed.
 
 It never writes agent-modes config. Run `/reload` afterwards so the subagent catalog lists the personas.
+
+There is no reasoning budget. To spend less, run the main chat on a cheaper mode with `/mode`, keep only modes you are willing to pay for in the list, or ask for cheaper subagents in the task.
 
 ## Optional companions
 
