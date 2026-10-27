@@ -1,0 +1,6 @@
+repo: https://github.com/cursor/plugins
+path: pstack
+commit: 8b3326d99fd4b993cb33a24dad8af03175c642c5
+date: 2026-10-22
+
+Everything here except docs/harness/ is generated. Do not edit it by hand. Run `node scripts/generate-pstack.mjs` and commit the result.
