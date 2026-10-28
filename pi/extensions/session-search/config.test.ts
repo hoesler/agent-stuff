@@ -20,34 +20,13 @@ test("defaults derive both paths from the agent dir", () => {
   assert.equal(config.maxSnippetChars, 240);
 });
 
-test("config paths: global first, project second, env replaces both", () => {
-  assert.deepEqual(
-    resolveConfigPaths({
-      envPath: undefined,
-      startupCwd: "/work",
-      agentDir: "/agent",
-      projectTrusted: true,
-    }),
-    [join("/agent", "session-search.json"), join("/work", ".pi", "session-search.json")],
-  );
-  assert.deepEqual(
-    resolveConfigPaths({
-      envPath: undefined,
-      startupCwd: "/work",
-      agentDir: "/agent",
-      projectTrusted: false,
-    }),
-    [join("/agent", "session-search.json")],
-  );
-  assert.deepEqual(
-    resolveConfigPaths({
-      envPath: "cfg.json",
-      startupCwd: "/work",
-      agentDir: "/agent",
-      projectTrusted: true,
-    }),
-    [join("/work", "cfg.json")],
-  );
+test("config paths: the global file, or the env path in its place", () => {
+  assert.deepEqual(resolveConfigPaths({ envPath: undefined, cwd: "/work", agentDir: "/agent" }), [
+    join("/agent", "session-search.json"),
+  ]);
+  assert.deepEqual(resolveConfigPaths({ envPath: "cfg.json", cwd: "/work", agentDir: "/agent" }), [
+    join("/work", "cfg.json"),
+  ]);
 });
 
 test("parseOverride accepts a partial file and rejects bad values", () => {
