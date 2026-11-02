@@ -98,8 +98,8 @@ export function renderResults(results: readonly SearchResult[], options: RenderO
   if (options.backlog && options.backlog.files > 0) {
     // Partial coverage that says it is partial beats a hang or a silent omission.
     lines.push(
-      `Note: ${options.backlog.files} files (${formatBytes(options.backlog.bytes)}) are not indexed yet — ` +
-        "run /session-index to finish them.",
+      `Note: ${options.backlog.files} files (${formatBytes(options.backlog.bytes)}) are not indexed yet. ` +
+        "Each search indexes more; `status --rebuild` indexes them all now.",
     );
   }
 

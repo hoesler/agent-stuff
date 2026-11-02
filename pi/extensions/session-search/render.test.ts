@@ -73,7 +73,7 @@ test("a backlog note rides along with the results", () => {
     backlog: { files: 120, bytes: 200000000 },
   });
   assert.match(text, /120 files/);
-  assert.match(text, /\/session-index/);
+  assert.match(text, /status --rebuild/);
 });
 
 test("relativeTime reads naturally at every scale", () => {

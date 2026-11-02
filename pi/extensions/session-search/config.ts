@@ -19,26 +19,24 @@ const ROOT_KEYS = new Set([
 
 export interface ConfigPathOptions {
   envPath: string | undefined;
-  startupCwd: string;
+  cwd: string;
   agentDir: string;
-  projectTrusted: boolean;
 }
 
 /**
- * Config sources, lowest precedence first. An env path replaces both files;
- * the project file is only consulted for a trusted project, matching how pi
- * gates `.pi/settings.json`.
+ * The one config source: the global file, or the env path in its place.
+ *
+ * There is no project layer. The CLI runs as a `bash` child and cannot see
+ * pi's trust decision — a session-only "trust" in particular lives nowhere it
+ * could read — and an index spanning every project has little to configure
+ * per project anyway.
  */
 export function resolveConfigPaths(options: ConfigPathOptions): string[] {
   const selected = options.envPath?.trim();
   if (selected) {
-    return [isAbsolute(selected) ? selected : resolve(options.startupCwd, selected)];
+    return [isAbsolute(selected) ? selected : resolve(options.cwd, selected)];
   }
-  const paths = [join(options.agentDir, "session-search.json")];
-  if (options.projectTrusted) {
-    paths.push(join(options.startupCwd, ".pi", "session-search.json"));
-  }
-  return paths;
+  return [join(options.agentDir, "session-search.json")];
 }
 
 /** Everything the extension needs, derived from the agent dir alone. */
@@ -91,7 +89,7 @@ function nonEmptyString(value: unknown, path: string): string {
 
 /**
  * Strict parse of one layer. Every field is optional — including `version` —
- * so a project file can adjust a single setting, and an absent file is simply
+ * so a file can adjust a single setting, and an absent file is simply
  * an absent layer rather than a broken configuration.
  */
 export function parseOverride(value: unknown): Partial<SessionSearchConfig> {
@@ -130,7 +128,7 @@ interface FileRead {
  * an edit takes effect without restarting pi.
  *
  * A broken layer is collected into `errors` and skipped rather than thrown: a
- * typo in the project file must not take searching away, but it must not be
+ * typo in the config file must not take searching away, but it must not be
  * silent either.
  */
 export class SessionSearchConfigLoader {

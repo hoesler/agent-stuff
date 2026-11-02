@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { openIndex } from "./db.ts";
 import { writeSession } from "./fixtures.ts";
-import sessionSearchExtension, { describeStatus } from "./index.ts";
-import { refreshIndex } from "./ingest.ts";
+import sessionSearchExtension from "./index.ts";
 
-test("status reports coverage, sizes, and the skipped-line count", () => {
-  const root = mkdtempSync(join(tmpdir(), "ss-status-"));
-  const dbPath = join(root, "index.sqlite");
-  const db = openIndex(dbPath);
+/** The extension against a stub of pi's API: it contributes a skill and a command, no tools. */
+function harness() {
+  const root = mkdtempSync(join(tmpdir(), "ss-ext-"));
   const sessions = join(root, "sessions");
   writeSession(sessions, {
     path: "--work-repo--/a.jsonl",
@@ -19,225 +16,39 @@ test("status reports coverage, sizes, and the skipped-line count", () => {
     cwd: "/work/repo",
     entries: [{ id: "e1", parentId: null, role: "user", text: "indexed prose" }],
   });
-  const stats = refreshIndex(db, {
-    sessionsDir: sessions,
-    budgetBytes: 1 << 30,
-    includeThinking: false,
-    excludeCwd: [],
-  });
-
-  const text = describeStatus(db, { dbPath, sessionsDir: sessions }, stats);
-  assert.match(text, /Files indexed: 1/);
-  assert.match(text, /Entries: 1/);
-  assert.match(text, /Skipped lines: 0/);
-  assert.match(text, /Index size:/);
-  assert.match(text, new RegExp(sessions.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-});
-
-test("status on an empty index says nothing is indexed", () => {
-  const root = mkdtempSync(join(tmpdir(), "ss-status-empty-"));
-  const dbPath = join(root, "index.sqlite");
-  const text = describeStatus(openIndex(dbPath), {
-    dbPath,
-    sessionsDir: join(root, "absent"),
-  });
-  assert.match(text, /Files indexed: 0/);
-  assert.match(text, /Entries: 0/);
-});
-
-/**
- * The registered tools, driven end to end against a stub of pi's extension API.
- * This is the closest a unit test gets to the real surface: the same execute()
- * functions the model calls, over a real index built from real JSONL.
- */
-function harness() {
-  const root = mkdtempSync(join(tmpdir(), "ss-tools-"));
-  const sessions = join(root, "sessions");
-  writeSession(sessions, {
-    path: "--work-repo--/a.jsonl",
-    id: "01a0cf09-c535-7458-8964-1708066115d0",
-    cwd: "/work/repo",
-    created: "2026-07-14T09:00:00.000Z",
-    entries: [
-      { id: "n0", parentId: null, type: "session_info", name: "Ripgrep vs SQLite" },
-      {
-        id: "e1",
-        parentId: "n0",
-        role: "user",
-        text: "convinced that ripgrep might be problematic because of JSON",
-      },
-      {
-        id: "e2",
-        parentId: "e1",
-        role: "assistant",
-        text: "sqlite fts5 keeps snippets",
-        toolCalls: [{ name: "write", arguments: { file_path: "/work/repo/src/auth.ts" } }],
-      },
-      { id: "e3", parentId: "e2", toolResult: { toolName: "write", text: "the whole file body" } },
-    ],
-  });
-
-  const tools = new Map<string, any>();
-  const commands = new Map<string, any>();
-  const handlers = new Map<string, any>();
-  // pi activates a tool when it is registered; the extension defers one again.
-  let active: string[] = [];
-  const pi = {
-    on: (event: string, handler: any) => handlers.set(event, handler),
-    registerTool: (tool: any) => {
-      tools.set(tool.name, tool);
-      active = [...active, tool.name];
-    },
-    registerCommand: (name: string, command: any) => commands.set(name, command),
-    getActiveTools: () => active,
-    setActiveTools: (names: string[]) => {
-      active = names;
-    },
-  } as any;
-
-  sessionSearchExtension(pi);
-
-  const notices: string[] = [];
-  const ctx = {
-    cwd: root,
-    hasUI: false,
-    isProjectTrusted: () => false,
-    ui: { notify: (message: string) => notices.push(message) },
-  } as any;
-
   process.env.PI_SESSION_SEARCH_CONFIG = join(root, "config.json");
   writeFileSync(
     process.env.PI_SESSION_SEARCH_CONFIG,
     JSON.stringify({ version: 1, dbPath: join(root, "index.sqlite"), sessionsDir: sessions }),
   );
 
-  return {
-    sessions,
-    tools,
-    commands,
-    handlers,
-    ctx,
-    notices,
-    activeTools: () => pi.getActiveTools(),
-    /** Stands in for another extension switching one of its tools on. */
-    activate: (name: string) => pi.setActiveTools([...pi.getActiveTools(), name]),
-  };
+  const handlers = new Map<string, any>();
+  const commands = new Map<string, any>();
+  const tools: string[] = [];
+  const pi = {
+    on: (event: string, handler: any) => handlers.set(event, handler),
+    registerTool: (tool: any) => tools.push(tool.name),
+    registerCommand: (name: string, command: any) => commands.set(name, command),
+  } as any;
+  sessionSearchExtension(pi);
+
+  const notices: string[] = [];
+  const ctx = { cwd: root, ui: { notify: (message: string) => notices.push(message) } } as any;
+  return { handlers, commands, tools, ctx, notices };
 }
 
-test("session_search finds a hit and session_read expands it", async () => {
-  const { tools, ctx } = harness();
+test("contributes the skill, and registers no tools", async () => {
+  const { handlers, tools } = harness();
+  assert.deepEqual(tools, []);
 
-  const found = await tools.get("session_search").execute("c1", { query: "ripgrep" }, undefined, undefined, ctx);
-  const text = found.content[0].text as string;
-  assert.match(text, /Ripgrep vs SQLite/);
-  assert.match(text, /session 01a0cf09-c535-7458-8964-1708066115d0/);
-  assert.match(text, /entry e1/);
-  // The session name and the message both match; the name is ranked first.
-  assert.equal(found.details.count, 2);
-  assert.ok(text.indexOf("entry n0") < text.indexOf("entry e1"));
-
-  const touched = await tools
-    .get("session_search")
-    .execute("c2", { touched: "**/auth.ts", action: "write" }, undefined, undefined, ctx);
-  assert.match(touched.content[0].text as string, /entry e2/);
-
-  const read = await tools
-    .get("session_read")
-    .execute("c3", { session: "01a0cf09-c535-7458-8964-1708066115d0", entry: "e1", around: 2, include_tools: true }, undefined, undefined, ctx);
-  const transcript = read.content[0].text as string;
-  assert.match(transcript, /user: convinced that ripgrep/);
-  assert.match(transcript, /write \/work\/repo\/src\/auth\.ts/);
-  // Tool output is never stored, so it can never be returned.
-  assert.doesNotMatch(transcript, /whole file body/);
-});
-
-test("session_read stays out of the schema until a search has something to read", async () => {
-  const { tools, handlers, ctx, activeTools } = harness();
-
-  await handlers.get("session_start")({ type: "session_start" }, ctx);
-  assert.deepEqual(activeTools(), ["session_search"]);
-
-  const empty = await tools
-    .get("session_search")
-    .execute("c1", { query: "nothingmatchesthis" }, undefined, undefined, ctx);
-  assert.equal(empty.details.count, 0);
-  assert.deepEqual(activeTools(), ["session_search"]);
-
-  await tools.get("session_search").execute("c2", { query: "ripgrep" }, undefined, undefined, ctx);
-  assert.deepEqual(activeTools(), ["session_search", "session_read"]);
-});
-
-test("activating session_read leaves another extension's tools where they were", async () => {
-  const { tools, handlers, ctx, activeTools, activate } = harness();
-
-  await handlers.get("session_start")({ type: "session_start" }, ctx);
-  // Another extension switches a tool on between session start and the search.
-  // Writing a remembered list back here would drop it out of the schema.
-  activate("run_experiment");
-
-  await tools.get("session_search").execute("c1", { query: "ripgrep" }, undefined, undefined, ctx);
-  assert.deepEqual(activeTools(), ["session_search", "run_experiment", "session_read"]);
-});
-
-test("scope narrows to the working directory, and an unhonourable scope says what it searched instead", async () => {
-  const { tools, ctx } = harness();
-
-  // The fixture session ran in /work/repo; ctx.cwd is the temp root.
-  const here = await tools
-    .get("session_search")
-    .execute("c1", { query: "ripgrep", scope: "project" }, undefined, undefined, ctx);
-  assert.equal(here.details.count, 0);
-
-  const everywhere = await tools
-    .get("session_search")
-    .execute("c2", { query: "ripgrep", scope: "/work/**" }, undefined, undefined, ctx);
-  assert.equal(everywhere.details.count, 2);
-
-  // No session manager in the harness, so lineage cannot be honoured.
-  const lineage = await tools
-    .get("session_search")
-    .execute("c3", { query: "ripgrep", scope: "lineage" }, undefined, undefined, ctx);
-  assert.match(lineage.content[0].text as string, /whole index/);
-  assert.equal(lineage.details.count, 2);
-});
-
-test("a malformed query and an unknown session are thrown, not returned as results", async () => {
-  const { tools, ctx } = harness();
-  await assert.rejects(
-    tools.get("session_search").execute("c1", { query: '"unbalanced' }, undefined, undefined, ctx),
-    /invalid query/i,
-  );
-  await assert.rejects(
-    tools.get("session_search").execute("c2", {}, undefined, undefined, ctx),
-    /at least one of/i,
-  );
-  await assert.rejects(
-    tools.get("session_read").execute("c3", { session: "nope" }, undefined, undefined, ctx),
-    /No indexed session matches/,
-  );
-});
-
-test("an ambiguous session prefix names its candidates instead of claiming no match", async () => {
-  const { sessions, tools, ctx } = harness();
-  // Started an hour after the harness session: the same leading UUIDv7 hex.
-  writeSession(sessions, {
-    path: "--work-repo--/b.jsonl",
-    id: "01a0cf2b-7e10-7a3c-9d41-5b2e6f0c8a17",
-    cwd: "/work/repo",
-    created: "2026-07-14T10:00:00.000Z",
-    entries: [{ id: "b1", parentId: null, role: "user", text: "a second session" }],
-  });
-  const read = (session: string) =>
-    tools.get("session_read").execute("c1", { session }, undefined, undefined, ctx);
-
-  await assert.rejects(read("01a0cf"), (error: Error) => {
-    assert.match(error.message, /"01a0cf" matches 2 sessions/);
-    assert.match(error.message, /01a0cf09-c535-7458-8964-1708066115d0 .*\/work\/repo/);
-    assert.match(error.message, /01a0cf2b-7e10-7a3c-9d41-5b2e6f0c8a17/);
-    return true;
-  });
-  const found = await read("01a0cf2b");
-  assert.match(found.details.path, /b\.jsonl$/);
+  const { skillPaths } = await handlers.get("resources_discover")({ type: "resources_discover" });
+  assert.equal(skillPaths.length, 1);
+  assert.ok(existsSync(skillPaths[0]), skillPaths[0]);
+  const skill = readFileSync(skillPaths[0], "utf8");
+  assert.match(skill, /^---\nname: session-search\n/);
+  // The skill's relative path must name a file that is actually there.
+  assert.match(skill, /node \.\/cli\.ts search/);
+  assert.ok(existsSync(join(skillPaths[0], "..", "cli.ts")));
 });
 
 test("/session-index reports status and --rebuild reindexes", async () => {
@@ -246,7 +57,7 @@ test("/session-index reports status and --rebuild reindexes", async () => {
   assert.match(notices.at(-1)!, /Files indexed: 1/);
 
   await commands.get("session-index").handler("--rebuild", ctx);
-  assert.match(notices.at(-1)!, /Entries: 4/);
+  assert.match(notices.at(-1)!, /Entries: 1/);
 
   await commands.get("session-index").handler("bogus", ctx);
   assert.match(notices.at(-1)!, /Usage: \/session-index/);

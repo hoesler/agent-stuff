@@ -64,22 +64,51 @@ canonical hit is the oldest file containing it — where the moment happened. Th
 descendants are listed alongside as continuations: the ancestor says what was
 said, the descendants say where the work went next.
 
-## Tools
+## The CLI and the skill
 
-### `session_search`
+The agent reaches the index through `cli.ts`, run with `node` through `bash`,
+and a skill (`SKILL.md`, contributed by the extension) that tells it when and
+how. There are no tools: nothing here needs the running pi process — the
+working directory and `PI_SESSION_FILE`, which pi hands every `bash` child, are
+all a search needs — so a session that never searches pays one skill line
+instead of two tool schemas. See
+[ADR-001](../../../docs/adr/ADR-001-tools-only-when-a-cli-cannot.md).
 
-At least one of `query`, `touched`, or `command` is required; the rest narrow.
+You can run it yourself too:
 
-| Parameter | Meaning |
+```bash
+alias session-search="node $PWD/pi/extensions/session-search/cli.ts"
+session-search search '"session index" AND sqlite'
+```
+
+Exit codes: `0` answered, `1` the query failed (malformed FTS5, unknown or
+ambiguous session) with the reason on stderr, `2` the invocation was wrong,
+with usage.
+
+### `search`
+
+```bash
+session-search search [QUERY] [--touched GLOB] [--action read|write|any] \
+  [--command TEXT] [--scope SCOPE] [--after DATE] [--before DATE] \
+  [--role user|assistant|any] [--limit N]
+```
+
+At least one of `QUERY`, `--touched`, or `--command` is required; the rest narrow.
+
+| Argument | Meaning |
 | --- | --- |
-| `query` | FTS5 expression over prose: phrases, `AND`/`OR`/`NOT`, `prefix*` |
-| `touched` | glob over a file path from tool evidence, e.g. `**/auth.ts` |
-| `action` | narrows `touched` to `write`, `read`, or `any` |
-| `command` | substring of a shell command that was run |
-| `scope` | where to look; see below |
-| `after`, `before` | ISO date, or relative shorthand such as `14d` |
-| `role` | `user`, `assistant`, or `any` |
-| `limit` | default 10 |
+| `QUERY` | FTS5 expression over prose: phrases, `AND`/`OR`/`NOT`, `prefix*`; `-` reads it from stdin |
+| `--touched` | glob over a file path from tool evidence, e.g. `**/auth.ts` |
+| `--action` | narrows `--touched` to `write`, `read`, or `any` |
+| `--command` | substring of a shell command that was run |
+| `--scope` | where to look; see below |
+| `--after`, `--before` | ISO date, or relative shorthand such as `14d` |
+| `--role` | `user`, `assistant`, or `any` |
+| `--limit` | 1–50, default 10 |
+
+`-` exists for quoting. FTS5 phrases are double-quoted, so a query goes in
+single quotes on the command line; one that itself contains a single quote is
+easier sent on stdin than escaped.
 
 A result is deliberately terse:
 
@@ -96,14 +125,14 @@ started within hours of it — a shortened id would look openable and not be.
 
 Worked examples:
 
-- what was said — `{ "query": "\"session index\" AND sqlite" }`
-- what was changed — `{ "touched": "**/auth.ts", "action": "write" }`
-- what was run — `{ "command": "migrate", "after": "14d" }`
-- where — `{ "query": "retry budget", "scope": "repo" }`
+- what was said — `search '"session index" AND sqlite'`
+- what was changed — `search --touched '**/auth.ts' --action write`
+- what was run — `search --command migrate --after 14d`
+- where — `search 'retry budget' --scope repo`
 
 ### Scopes
 
-`scope` answers *where to look*, and defaults to everywhere. Searching every
+`--scope` answers *where to look*, and defaults to everywhere. Searching every
 project is the default because the question the extension exists for — *where
 was that conversation* — is usually asked precisely when the project is what
 you have forgotten.
@@ -135,28 +164,29 @@ result: `repo` outside a repository searches `project`, and `lineage` with no
 running session searches everything. A scope that silently returned less would
 read as an answer.
 
-### `session_read`
+### `read`
+
+```bash
+session-search read SESSION (--entry ID [--around N] | --branch LEAF | --last N) \
+  [--include-tools] [--offset N]
+```
 
 Expands a hit without leaving the current session.
 
-It is registered from the start but stays out of the model's tool schema until a
-`session_search` returns at least one hit, at which point it is switched on for
-the rest of the session. Its arguments are a session id and an entry id, which
-nobody guesses cold — so before the first search it is a tool that cannot be
-called, and the schema it would occupy is the resting cost of the extension in
-every session that never searches. `/tools` shows it appear.
-
-A pin from `/tools` stands: the tool is deferred once at session start and never
-deactivated again.
-
-- `session` — id, unambiguous id prefix, or file path; an ambiguous prefix is
+- `SESSION` — id, unambiguous id prefix, or file path; an ambiguous prefix is
   refused with the matching ids listed in full, not reported as no match
-- one of `entry` plus `around` (default 10 surrounding entries), `branch` with a
-  leaf id for that whole path, or `last` for the final N entries
-- `include_tools` (default off) adds tool names and targets, never their
-  outputs — which is what keeps a 200-entry branch affordable to read
-- output is capped at 8000 characters, `offset` pages through it, and truncation
-  is stated
+- one of `--entry` plus `--around` (default 10 surrounding entries), `--branch`
+  with a leaf id for that whole path, or `--last` for the final N entries
+  (default 20)
+- `--include-tools` adds tool names and targets, never their outputs — which is
+  what keeps a 200-entry branch affordable to read
+- output is capped at 8000 characters, `--offset` pages through it, and
+  truncation is stated
+
+### `status`
+
+The same report as [`/session-index`](#session-index); `status --rebuild` is
+`/session-index --rebuild`.
 
 ## `/session-index`
 
@@ -170,14 +200,16 @@ together with a note saying how many files remain.
 
 ## Configuration
 
-Optional — the extension works with no config file at all. Sources, lowest
-precedence first:
+Optional — the extension works with no config file at all. One source:
 
-1. `~/.pi/agent/session-search.json` — global
-2. `.pi/session-search.json` — project, merged per field, read only when the
-   project is trusted
-3. `PI_SESSION_SEARCH_CONFIG` — absolute, or resolved against the startup cwd;
-   replaces both
+- `~/.pi/agent/session-search.json` (under `PI_CODING_AGENT_DIR` when set), or
+- `PI_SESSION_SEARCH_CONFIG` in its place — absolute, or resolved against the
+  working directory.
+
+There is no project layer. It used to be read only for a trusted project, and
+the CLI, running as a `bash` child, cannot see pi's trust decision — a
+session-only "trust" lives nowhere it could read. An index spanning every
+project has little to configure per project anyway.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -190,6 +222,12 @@ precedence first:
 
 A broken config file is reported on the next result and otherwise ignored: a
 typo must not take searching away, but it must not be silent either.
+
+### Sandboxes
+
+The CLI runs in the agent's `bash` child, so a sandbox around pi applies to it:
+it must be able to write `dbPath` and read `sessionsDir`. Under a sandbox that
+leaves `~/.pi` read-only, point `dbPath` somewhere writable.
 
 ## Failure behavior
 
@@ -214,14 +252,14 @@ Taken on a synthetic corpus shaped like a real one — 541 files, 162k entries,
 
 Full backfill being seconds rather than minutes is why the byte budget is a
 safety net rather than the normal path: at this rate the 32 MB default is under
-a second. Steady-state refresh is imperceptible inside a tool call.
+a second. Steady-state refresh is imperceptible next to starting `node`: a search on an
+already-indexed 664 MB corpus takes about 0.2 s end to end.
 
 Take the numbers for your own corpus with:
 
 ```bash
-pi -e pi/extensions/session-search/index.ts
-# /session-index --rebuild   → full backfill time
-# /session-index             → steady-state refresh time
+time node pi/extensions/session-search/cli.ts status --rebuild   # full backfill
+time node pi/extensions/session-search/cli.ts status             # steady-state refresh
 du -sh ~/.pi/agent/sessions ~/.pi/agent/session-search/index.sqlite
 ```
 
