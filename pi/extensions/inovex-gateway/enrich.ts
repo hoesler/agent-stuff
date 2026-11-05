@@ -69,6 +69,14 @@ function find(catalog: Catalog, order: readonly string[], matches: (id: string) 
   return undefined;
 }
 
+/**
+ * pi takes the gateway for OpenAI's own API and hands a reasoning model its
+ * instructions in the `developer` role. Kimi's chat template at Nebul rejects
+ * that role outright; `system` is understood by every backend behind the
+ * gateway, and the gateway translates it for Gemini.
+ */
+const OPENAI_COMPAT = { supportsDeveloperRole: false } as CatalogModel["compat"];
+
 /** The model's own provider's entry, when there is one. */
 function ownEntry(entry: GatewayModel, catalog: Catalog): CatalogModel | undefined {
   if (!OWN_PROVIDERS.has(entry.ownedBy) || !catalog.providers.includes(entry.ownedBy)) return undefined;
@@ -103,7 +111,7 @@ export function toProviderModels(entries: readonly GatewayModel[], catalog: Cata
     const anthropic = entry.ownedBy === "anthropic";
     const own = ownEntry(entry, catalog);
     const source = own ?? borrowed(entry, catalog, order) ?? UNKNOWN;
-    const compat = anthropic && own ? anthropicCompat(own.compat) : undefined;
+    const compat = anthropic ? (own ? anthropicCompat(own.compat) : undefined) : OPENAI_COMPAT;
     return {
       id: entry.id,
       name: entry.name,

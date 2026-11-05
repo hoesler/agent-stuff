@@ -32,6 +32,11 @@ so Gemini goes through the OpenAI API like the open models. Model IDs are sent
 exactly as the gateway lists them (`anthropic/claude-opus-5-5`), since the
 prefix is what routes; in pi you select one as `inovex/anthropic/claude-opus-5-5`.
 
+pi takes `gateway.inovex.ai/v1` for OpenAI's own API and would hand reasoning
+models their instructions in the `developer` role. Kimi at Nebul answers that
+with `400 Unknown message role 'developer'`, so every model on the OpenAI API
+gets `supportsDeveloperRole: false` and its instructions as `system`.
+
 ## Limits and prices
 
 `/v1/models` names a model and its owner, nothing else. The context window,

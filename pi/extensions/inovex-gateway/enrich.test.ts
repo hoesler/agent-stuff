@@ -104,3 +104,13 @@ test("a Claude model matched at another host takes neither its compat nor its ca
   assert.equal(m.compat, undefined);
   assert.equal(m.promptCache, undefined);
 });
+
+test("a model over the OpenAI API gets its instructions as system, which every backend behind the gateway understands", () => {
+  for (const entry of [
+    { id: "moonshotai/Kimi-K3", name: "Kimi K3", ownedBy: "nebul" },
+    { id: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", ownedBy: "google" },
+    { id: "nebul/unknown", name: "Unknown", ownedBy: "nebul" },
+  ]) {
+    assert.deepEqual(one(entry).compat, { supportsDeveloperRole: false }, entry.id);
+  }
+});
