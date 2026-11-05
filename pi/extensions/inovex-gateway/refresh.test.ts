@@ -129,3 +129,15 @@ test("a failed snapshot write is reported but the refresh still succeeds", async
   assert.deepEqual(ids(await refresh.refreshModels(network())), ids(FETCHED));
   assert.deepEqual(reports, ["the model list could not be saved: EACCES"]);
 });
+
+test("a gateway that does not answer in time is reported, unlike a superseded pass", async () => {
+  const controller = new AbortController();
+  const { refresh, reports } = setup({
+    fetchModels: async () => {
+      controller.abort(new DOMException("timed out", "TimeoutError"));
+      throw new DOMException("timed out", "TimeoutError");
+    },
+  });
+  await assert.rejects(refresh.refreshModels(network(controller.signal)));
+  assert.deepEqual(reports, ["the gateway did not answer in time"]);
+});

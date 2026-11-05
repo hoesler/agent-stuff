@@ -15,7 +15,7 @@ export type ChatModelConfig = Extract<ProviderModelConfig, { reasoning: boolean 
 
 /** The part of a pi-ai catalog model read here. */
 export type CatalogModel = Pick<ChatModelConfig, "id" | "input" | "reasoning" | "contextWindow" | "maxTokens" | "cost"> &
-  Partial<Pick<ChatModelConfig, "thinkingLevelMap" | "promptCache">>;
+  Partial<Pick<ChatModelConfig, "thinkingLevelMap" | "promptCache" | "compat">>;
 
 export interface Catalog {
   providers: readonly string[];
@@ -69,12 +69,14 @@ function find(catalog: Catalog, order: readonly string[], matches: (id: string) 
   return undefined;
 }
 
-function match(entry: GatewayModel, catalog: Catalog, order: readonly string[]): CatalogModel | undefined {
-  if (OWN_PROVIDERS.has(entry.ownedBy) && catalog.providers.includes(entry.ownedBy)) {
-    const bare = entry.id.slice(entry.id.indexOf("/") + 1);
-    const own = catalog.models(entry.ownedBy).find((candidate) => candidate.id === bare);
-    if (own) return own;
-  }
+/** The model's own provider's entry, when there is one. */
+function ownEntry(entry: GatewayModel, catalog: Catalog): CatalogModel | undefined {
+  if (!OWN_PROVIDERS.has(entry.ownedBy) || !catalog.providers.includes(entry.ownedBy)) return undefined;
+  const bare = entry.id.slice(entry.id.indexOf("/") + 1);
+  return catalog.models(entry.ownedBy).find((candidate) => candidate.id === bare);
+}
+
+function borrowed(entry: GatewayModel, catalog: Catalog, order: readonly string[]): CatalogModel | undefined {
   const lower = entry.id.toLowerCase();
   const exact = find(catalog, order, (id) => id.toLowerCase() === lower);
   if (exact) return exact;
@@ -82,11 +84,26 @@ function match(entry: GatewayModel, catalog: Catalog, order: readonly string[]):
   return find(catalog, order, (id) => normalize(id) === normalized);
 }
 
+/**
+ * How Anthropic's own entry says to talk to the model. Current Claude models
+ * accept only adaptive thinking and no temperature, and the gateway forwards
+ * the request untranslated, so without this pi would send budget thinking and
+ * be refused. The fallback models name pi's `anthropic` provider and a beta
+ * only Anthropic's own API serves.
+ */
+function anthropicCompat(compat: CatalogModel["compat"]): CatalogModel["compat"] | undefined {
+  if (!compat) return undefined;
+  const { allowedFallbackModels: _fallbacks, ...rest } = compat as Record<string, unknown>;
+  return rest as CatalogModel["compat"];
+}
+
 export function toProviderModels(entries: readonly GatewayModel[], catalog: Catalog): ChatModelConfig[] {
   const order = searchOrder(catalog);
   return entries.map((entry) => {
     const anthropic = entry.ownedBy === "anthropic";
-    const source = match(entry, catalog, order) ?? UNKNOWN;
+    const own = ownEntry(entry, catalog);
+    const source = own ?? borrowed(entry, catalog, order) ?? UNKNOWN;
+    const compat = anthropic && own ? anthropicCompat(own.compat) : undefined;
     return {
       id: entry.id,
       name: entry.name,
@@ -100,9 +117,10 @@ export function toProviderModels(entries: readonly GatewayModel[], catalog: Cata
       contextWindow: source.contextWindow,
       maxTokens: source.maxTokens,
       cost: { ...source.cost },
+      ...(compat ? { compat } : {}),
       // A cache lifetime is the serving host's promise. Only Anthropic's own
       // entry describes the host the gateway actually forwards Claude to.
-      ...(anthropic && source.promptCache ? { promptCache: source.promptCache } : {}),
+      ...(anthropic && own?.promptCache ? { promptCache: own.promptCache } : {}),
     };
   });
 }

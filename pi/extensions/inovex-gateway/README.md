@@ -10,7 +10,8 @@ The extension reads the gateway key from `GATEWAY_API_TOKEN`, the variable
 `synapse launch` sets. A key lives eight hours; `synapse auth default` mints a
 new one. Getting it into pi's environment, and renewing it, is the sandbox's
 job — for example a nono credential that runs `synapse auth default`. Without a
-key the models stay listed and a request says the key is missing.
+key pi counts the provider as unconfigured and hides its models from `/model`
+and `pi --list-models` until one is set.
 
 The key goes out only as `Authorization: Bearer`. The gateway refuses a key it
 receives as `x-api-key` alone, which is how pi's Anthropic client sends a plain
@@ -25,9 +26,9 @@ API key, so the provider sets `authHeader: true`.
 
 The gateway forwards the Anthropic API untranslated, so Claude keeps prompt
 caching and thinking blocks. It does not translate the Anthropic API to Gemini,
-so Gemini goes through the OpenAI API like the open models. Model IDs are used
-exactly as the gateway lists them — `inovex/anthropic/claude-opus-5-5` — since
-the prefix is what routes.
+so Gemini goes through the OpenAI API like the open models. Model IDs are sent
+exactly as the gateway lists them (`anthropic/claude-opus-5-5`), since the
+prefix is what routes; in pi you select one as `inovex/anthropic/claude-opus-5-5`.
 
 ## Limits and prices
 
@@ -42,6 +43,11 @@ output limit, reasoning flag, input types and price come from pi's own catalog:
    `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` finds
    `nvidia/nemotron-3-super-120b-a12b`.
 4. Nothing found: text only, 128k context, 8k output, no reasoning, no price.
+
+A Claude model found in step 1 also takes Anthropic's request `compat` — current
+Claude models accept only adaptive thinking and no temperature, and the gateway
+passes the request through untranslated. A Claude model found only at another
+host takes neither that host's `compat` nor its cache lifetime.
 
 The open models run at Nebul, and nobody publishes Nebul's limits; the numbers
 are another host's. Correct one with `modelOverrides` in `models.json`:
@@ -72,7 +78,7 @@ until that answer arrives.
 
 ## When it speaks up
 
-An expired or refused key, an unreachable gateway, an empty list, or a list that
+An expired or refused key, an unreachable or stalled gateway, an empty list, or a list that
 could not be saved shows once as an error notification:
 
     inovex-gateway: the gateway refused the key (401); it has probably expired — renew it with synapse auth.

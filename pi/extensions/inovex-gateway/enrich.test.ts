@@ -80,3 +80,27 @@ test("a non-anthropic match never carries a prompt cache lifetime", () => {
   const m = one({ id: "moonshotai/Kimi-K3", name: "Kimi K3", ownedBy: "nebul" });
   assert.equal(m.promptCache, undefined);
 });
+
+test("a Claude model keeps anthropic's request compat, minus the fallback models only Anthropic's own API serves", () => {
+  const compat = { forceAdaptiveThinking: true, supportsTemperature: false, allowedFallbackModels: [] } as unknown as CatalogModel["compat"];
+  const withCompat: Catalog = {
+    providers: ["anthropic"],
+    models: () => [model("claude-opus-5-5", 1_000_000, { compat })],
+  };
+  const [m] = toProviderModels([{ id: "anthropic/claude-opus-5-5", name: "Opus", ownedBy: "anthropic" }], withCompat);
+  assert.deepEqual(m.compat, { forceAdaptiveThinking: true, supportsTemperature: false });
+});
+
+test("a Claude model matched at another host takes neither its compat nor its cache lifetime", () => {
+  const elsewhere: Catalog = {
+    providers: ["anthropic", "openrouter"],
+    models: (provider) =>
+      provider === "openrouter"
+        ? [model("anthropic/claude-mythos-5-1", 1_000_000, { promptCache: { short: 300 }, compat: { supportsTemperature: false } as CatalogModel["compat"] })]
+        : [],
+  };
+  const [m] = toProviderModels([{ id: "anthropic/claude-mythos-5-1", name: "Mythos", ownedBy: "anthropic" }], elsewhere);
+  assert.equal(m.contextWindow, 1_000_000);
+  assert.equal(m.compat, undefined);
+  assert.equal(m.promptCache, undefined);
+});

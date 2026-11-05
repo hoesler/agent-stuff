@@ -75,8 +75,14 @@ export function createGatewayRefresh({ initial, catalog, token, fetchModels, sav
       fetched = await (fetchModels ?? fetchGatewayModels)(key, context.signal);
     } catch (cause) {
       // pi aborts the previous pass for a provider whenever a new one starts,
-      // so a cancelled request is routine. It is pi's to report.
-      if (context.signal.aborted) throw cause;
+      // so a cancelled request is routine. It is pi's to report. A pass that
+      // ran out of time is not: the gateway stalled, and the list is stale.
+      if (context.signal.aborted) {
+        if ((context.signal.reason as { name?: unknown } | undefined)?.name === "TimeoutError") {
+          announce("the gateway did not answer in time");
+        }
+        throw cause;
+      }
       announce(
         cause instanceof GatewayError
           ? cause.message
