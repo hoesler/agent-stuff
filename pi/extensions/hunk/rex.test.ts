@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import type { Exec } from "./cli.ts";
-import { insideRex, REX_TIMEOUT_MS, spawnTab, windowArgs } from "./rex.ts";
+import { insideRex, PAUSE_ON_FAILURE, REX_TIMEOUT_MS, spawnTab, windowArgs } from "./rex.ts";
 
 type Outcome = { stdout?: string; stderr?: string; code?: number; killed?: boolean };
 
@@ -46,7 +47,12 @@ test("the tab is named, opened in pi's session and the repository, and runs hunk
     "-c",
     "/work",
     "--json",
+    "--autostart=false",
     "--",
+    "sh",
+    "-c",
+    PAUSE_ON_FAILURE,
+    "sh",
     "hunk",
     "diff",
     "main...HEAD",
@@ -55,6 +61,23 @@ test("the tab is named, opened in pi's session and the repository, and runs hunk
 
 test("a target word with a space reaches rex as one word", () => {
   assert.deepEqual(windowArgs("s1", "/work", "hunk", ["diff", "a b.ts"]).slice(-2), ["diff", "a b.ts"]);
+});
+
+test("the wrapper hands hunk its words unchanged", () => {
+  const out = execFileSync("sh", ["-c", PAUSE_ON_FAILURE, "sh", "printf", "%s|", "a b.ts", "main...HEAD", "$HOME"], {
+    encoding: "utf8",
+  });
+  assert.equal(out, "a b.ts|main...HEAD|$HOME|");
+});
+
+test("a failing hunk keeps the tab open with its status until Enter, and passes the status on", () => {
+  const run = spawnSync("sh", ["-c", PAUSE_ON_FAILURE, "sh", "sh", "-c", "echo boom >&2; exit 3"], {
+    encoding: "utf8",
+    input: "\n",
+  });
+  assert.equal(run.status, 3);
+  assert.match(run.stderr, /boom/);
+  assert.match(run.stdout, /hunk exited with status 3/);
 });
 
 test("outside a Rex session nothing is driven at all", async () => {

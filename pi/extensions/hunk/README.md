@@ -101,10 +101,10 @@ herdr sets `HERDR_ENV=1` in every pane it manages, and that is how the extension
 In Rex mode the extension opens a new tab named `Hunk` in the session pi is running in, on the repository under review:
 
 ```bash
-rex window new -s "$REX_SESSION" Hunk -c <repo> --json -- hunk diff
+rex window new -s "$REX_SESSION" Hunk -c <repo> --json --autostart=false -- sh -c '<pause on failure>' sh hunk diff
 ```
 
-The tab takes focus and closes when Hunk exits. Rex sets `REX_SESSION` in every terminal it opens, and that is how the extension knows it is inside one and which session to add the tab to. A missing `REX_SESSION` is reported rather than guessed around.
+The tab takes focus and closes when you quit Hunk. If Hunk fails instead — a wrong `hunkBin`, a target it rejects — the tab stays open on its error until you press Enter. `--autostart=false` keeps `rex` from starting a fresh server, which would not hold pi's session, when it cannot reach the running one. Rex sets `REX_SESSION` in every terminal it opens, and that is how the extension knows it is inside one and which session to add the tab to. A missing `REX_SESSION` is reported rather than guessed around.
 
 ## What it leaves alone
 

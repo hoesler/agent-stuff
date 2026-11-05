@@ -20,12 +20,41 @@ export function insideRex(env: Record<string, string | undefined>): boolean {
 }
 
 /**
+ * Runs its arguments as one command and, only if it fails, holds the tab open
+ * until Enter. A Rex tab closes when its command exits, so a hunk that cannot
+ * start — wrong binary, rejected target — would otherwise vanish with its error,
+ * leaving only "did not register" to go on. herdr and Ghostty type into a shell,
+ * which stays open by itself; a clean quit here still closes the tab.
+ */
+export const PAUSE_ON_FAILURE =
+  '"$@" || { status=$?; printf "\\nhunk exited with status %s. Press Enter to close this tab." "$status"; read _; exit "$status"; }';
+
+/**
  * The command goes after `--` as separate words, so a target with spaces needs
  * no quoting. `-c` is explicit for the same reason the other backends carry a
  * cwd: the tab must open on the repository under review, not wherever pi started.
+ * `--autostart=false` because a server `rex` started for us would not hold pi's
+ * session: an unreachable server must surface as itself, not as a timeout.
  */
 export function windowArgs(session: string, cwd: string, hunkBin: string, target: string[]): string[] {
-  return ["window", "new", "-s", session, "Hunk", "-c", cwd, "--json", "--", hunkBin, ...target];
+  return [
+    "window",
+    "new",
+    "-s",
+    session,
+    "Hunk",
+    "-c",
+    cwd,
+    "--json",
+    "--autostart=false",
+    "--",
+    "sh",
+    "-c",
+    PAUSE_ON_FAILURE,
+    "sh",
+    hunkBin,
+    ...target,
+  ];
 }
 
 export interface RexDeps {
