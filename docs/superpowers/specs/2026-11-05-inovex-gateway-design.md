@@ -16,7 +16,7 @@ The gateway keeps a curated model list at `GET /v1/models`. pi should follow tha
 
 ## Non-goals
 
-- Obtaining or renewing the key. It is read from `GATEWAY_API_TOKEN`; the sandbox (nono, running `synapse auth default`) injects it and handles the 8-hour expiry.
+- Obtaining or renewing the key. It is read from `INOVEX_GATEWAY_API_KEY`; the sandbox (nono, running `synapse auth default`) injects it and handles the 8-hour expiry.
 - Routing your own Claude or Copilot subscription through the gateway.
 - Enforcing the data-classification rules (which data may go to which model).
 - Its own config file. Per-model corrections go through pi's `modelOverrides` in `models.json`.
@@ -44,7 +44,7 @@ The gateway keeps a curated model list at `GET /v1/models`. pi should follow tha
 
 ## Design
 
-**Registration.** `pi.registerProvider("inovex", { name: "inovex AI Gateway", baseUrl: "https://gateway.inovex.ai/v1", api: "openai-completions", apiKey: "$GATEWAY_API_TOKEN", authHeader: true, models: <snapshot>, refreshModels })`. Anthropic-owned models set `api: "anthropic-messages"` and `baseUrl: "https://gateway.inovex.ai"`.
+**Registration.** `pi.registerProvider("inovex", { name: "inovex AI Gateway", baseUrl: "https://gateway.inovex.ai/v1", api: "openai-completions", apiKey: "$INOVEX_GATEWAY_API_KEY", authHeader: true, models: <snapshot>, refreshModels })`. Anthropic-owned models set `api: "anthropic-messages"` and `baseUrl: "https://gateway.inovex.ai"`.
 
 **Snapshot.** The last good `/v1/models` answer (raw entries, not enriched models) lives at `<agentDir>/inovex-gateway/models.json`. The factory reads this local file at load and registers its models, so startup and `pi --list-models` have them without a round trip. No snapshot yet → no models until the first network refresh. Enrichment runs on every pass, so a pi upgrade's newer catalog applies without refetching.
 

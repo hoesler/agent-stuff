@@ -6,9 +6,11 @@ so pi follows the gateway's curated list instead of a hand-kept one.
 
 ## The key
 
-The extension reads the gateway key from `GATEWAY_API_TOKEN`, the variable
-`synapse launch` sets. A key lives eight hours; `synapse auth default` mints a
-new one. Getting it into pi's environment, and renewing it, is the sandbox's
+The extension reads the gateway key from `INOVEX_GATEWAY_API_KEY`. A key lives
+eight hours; `synapse auth default` mints a new one. `synapse launch` sets the
+generic `GATEWAY_API_TOKEN` instead, so under it start pi as
+`INOVEX_GATEWAY_API_KEY=$GATEWAY_API_TOKEN pi`. Getting the key into pi's
+environment, and renewing it, is the sandbox's
 job — for example a nono credential that runs `synapse auth default`. Without a
 key pi counts the provider as unconfigured and hides its models from `/model`
 and `pi --list-models` until one is set.

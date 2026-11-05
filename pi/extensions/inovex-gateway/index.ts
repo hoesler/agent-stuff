@@ -7,7 +7,7 @@
  * The gateway speaks two APIs behind one key. Claude goes over the Anthropic
  * Messages API, which the gateway forwards untranslated; everything else,
  * Gemini included, over the OpenAI Chat Completions API on /v1. The key is read
- * from GATEWAY_API_TOKEN and sent only as `Authorization: Bearer` — the gateway
+ * from INOVEX_GATEWAY_API_KEY and sent only as `Authorization: Bearer` — the gateway
  * refuses a key that arrives as `x-api-key` alone, which is how pi's Anthropic
  * client would otherwise send it.
  *
@@ -22,7 +22,7 @@ import { builtinCatalog, createGatewayRefresh } from "./refresh.ts";
 import { readSnapshot, writeSnapshot } from "./snapshot.ts";
 
 const PROVIDER = "inovex";
-const TOKEN_ENV = "GATEWAY_API_TOKEN";
+const TOKEN_ENV = "INOVEX_GATEWAY_API_KEY";
 
 /** Long enough for a slow gateway, short enough not to hang a reload. */
 const REFRESH_TIMEOUT_MS = 15_000;

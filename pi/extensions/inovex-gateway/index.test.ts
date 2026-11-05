@@ -49,11 +49,11 @@ function extensionContext(refresh: (options: Record<string, unknown>) => Promise
 
 const sessionStart = { type: "session_start", reason: "startup" };
 
-test("registers the inovex provider with bearer auth from GATEWAY_API_TOKEN", () => {
+test("registers the inovex provider with bearer auth from INOVEX_GATEWAY_API_KEY", () => {
   const { seen } = load();
   assert.equal(seen.name, "inovex");
   assert.equal(seen.config?.name, "inovex AI Gateway");
-  assert.equal(seen.config?.apiKey, "$GATEWAY_API_TOKEN");
+  assert.equal(seen.config?.apiKey, "$INOVEX_GATEWAY_API_KEY");
   assert.equal(seen.config?.authHeader, true);
   assert.equal(seen.config?.baseUrl, "https://gateway.inovex.ai/v1");
   assert.equal(seen.config?.api, "openai-completions");
