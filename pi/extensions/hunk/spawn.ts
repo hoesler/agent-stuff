@@ -1,6 +1,7 @@
 import type { Exec } from "./cli.ts";
 import { spawnWindow } from "./ghostty.ts";
 import { insideHerdr, spawnPane } from "./herdr.ts";
+import { insideRex, spawnTab } from "./rex.ts";
 import type { HunkConfig, SpawnMode, SpawnOutcome } from "./types.ts";
 
 export interface SpawnDeps {
@@ -20,7 +21,8 @@ export function chooseBackend(
   env: Record<string, string | undefined>,
 ): Exclude<SpawnMode, "auto"> {
   if (config.spawn !== "auto") return config.spawn;
-  return insideHerdr(env) ? "herdr" : "ghostty";
+  if (insideHerdr(env)) return "herdr";
+  return insideRex(env) ? "rex" : "ghostty";
 }
 
 /**
@@ -42,7 +44,12 @@ export function createSpawn(
           { exec: deps.exec, env: deps.env },
           { cwd, herdrBin: config.herdrBin, hunkBin: config.hunkBin, target },
         );
-      default:
+      case "rex":
+        return spawnTab(
+          { exec: deps.exec, env: deps.env },
+          { cwd, rexBin: config.rexBin, hunkBin: config.hunkBin, target },
+        );
+      case "ghostty":
         return spawnWindow(
           { exec: deps.exec, platform: deps.platform },
           { cwd, hunkBin: config.hunkBin, target },

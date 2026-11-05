@@ -40,6 +40,7 @@ test("defaults are the documented ones", () => {
     version: 1,
     hunkBin: "hunk",
     herdrBin: "herdr",
+    rexBin: "rex",
     spawn: "auto",
     noteAuthor: "pi",
   });
@@ -59,18 +60,26 @@ test("an unknown property is an error, not a silent ignore", () => {
 test("an unknown spawn mode names the allowed ones", () => {
   assert.throws(
     () => parseConfig({ spawn: "iterm" }, "/c.json"),
-    /expected one of auto, herdr, ghostty, never/,
+    /expected one of auto, herdr, rex, ghostty, never/,
   );
 });
 
 test("every documented spawn mode parses", () => {
-  for (const mode of ["auto", "herdr", "ghostty", "never"]) {
+  for (const mode of ["auto", "herdr", "rex", "ghostty", "never"]) {
     assert.equal(parseConfig({ spawn: mode }, "/c.json").spawn, mode);
   }
 });
 
 test("an empty herdrBin is rejected rather than producing an unrunnable command", () => {
   assert.throws(() => parseConfig({ herdrBin: "  " }, "/c.json"), /expected a non-empty string/);
+});
+
+test("an empty rexBin is rejected rather than producing an unrunnable command", () => {
+  assert.throws(() => parseConfig({ rexBin: "  " }, "/c.json"), /expected a non-empty string/);
+});
+
+test("a configured rexBin is kept", () => {
+  assert.equal(parseConfig({ rexBin: "/opt/bin/rex" }, "/c.json").rexBin, "/opt/bin/rex");
 });
 
 test("an empty hunkBin is rejected rather than producing an unrunnable command", () => {
@@ -119,6 +128,7 @@ test("later config files override only the keys they name, preserving earlier ke
     version: 1,
     hunkBin: "hunk",
     herdrBin: "herdr",
+    rexBin: "rex",
     spawn: "never",
     noteAuthor: "reviewer",
   });
