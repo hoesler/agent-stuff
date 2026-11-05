@@ -6,13 +6,14 @@ export type SpawnOutcome = { ok: true } | { ok: false; message: string };
 
 /**
  * Where a window may be spawned from, when none is live. `auto` picks herdr
- * when pi is running inside one of its panes: a Ghostty split would otherwise
- * open the diff outside the multiplexer's own layout, where the user is not
- * looking.
+ * when pi is running inside one of its panes, then Rex when pi is inside a Rex
+ * session: a Ghostty split would otherwise open the diff outside the layout
+ * the user is looking at. herdr wins over Rex because a herdr pane inside Rex
+ * is the nearer of the two.
  */
-export type SpawnMode = "auto" | "herdr" | "ghostty" | "never";
+export type SpawnMode = "auto" | "herdr" | "rex" | "ghostty" | "never";
 
-export const SPAWN_MODES: readonly SpawnMode[] = ["auto", "herdr", "ghostty", "never"];
+export const SPAWN_MODES: readonly SpawnMode[] = ["auto", "herdr", "rex", "ghostty", "never"];
 
 /**
  * A fully resolved configuration. Every field has a value: the extension works
@@ -25,6 +26,8 @@ export interface HunkConfig {
   hunkBin: string;
   /** Path to the herdr binary, for installs outside PATH. */
   herdrBin: string;
+  /** Path to the rex binary, for installs outside PATH. */
+  rexBin: string;
   /** `never` always prints the command instead of opening a window. */
   spawn: SpawnMode;
   /** `--author` on notes the agent is told to write. */
@@ -34,6 +37,7 @@ export interface HunkConfig {
 export const DEFAULTS = {
   hunkBin: "hunk",
   herdrBin: "herdr",
+  rexBin: "rex",
   spawn: "auto" as SpawnMode,
   noteAuthor: "pi",
 } as const;

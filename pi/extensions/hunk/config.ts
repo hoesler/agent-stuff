@@ -9,7 +9,7 @@ import {
   type SpawnMode,
 } from "./types.ts";
 
-const ROOT_KEYS = new Set(["version", "hunkBin", "herdrBin", "spawn", "noteAuthor"]);
+const ROOT_KEYS = new Set(["version", "hunkBin", "herdrBin", "rexBin", "spawn", "noteAuthor"]);
 
 export interface ConfigPathOptions {
   envPath: string | undefined;
@@ -40,6 +40,7 @@ export function defaultConfig(): HunkConfig {
     version: 1,
     hunkBin: DEFAULTS.hunkBin,
     herdrBin: DEFAULTS.herdrBin,
+    rexBin: DEFAULTS.rexBin,
     spawn: DEFAULTS.spawn,
     noteAuthor: DEFAULTS.noteAuthor,
   };
@@ -74,6 +75,7 @@ export function parseConfig(raw: unknown, path: string, base: HunkConfig = defau
     version: 1,
     hunkBin: nonEmptyString(input.hunkBin, `${path}.hunkBin`, base.hunkBin),
     herdrBin: nonEmptyString(input.herdrBin, `${path}.herdrBin`, base.herdrBin),
+    rexBin: nonEmptyString(input.rexBin, `${path}.rexBin`, base.rexBin),
     spawn: spawnMode(input.spawn, `${path}.spawn`, base.spawn),
     noteAuthor: nonEmptyString(input.noteAuthor, `${path}.noteAuthor`, base.noteAuthor),
   };

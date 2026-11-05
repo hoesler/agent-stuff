@@ -71,6 +71,49 @@ test("spawn: auto falls back to Ghostty outside herdr", async () => {
   assert.deepEqual(calls, ["osascript"]);
 });
 
+test("spawn: rex drives Rex", async () => {
+  const { spawn, calls } = spawnWith({ spawn: "rex", env: { REX_SESSION: "s1" } });
+  const result = await spawn(["diff"]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["rex"]);
+});
+
+test("spawn: rex outside a Rex session fails rather than falling back", async () => {
+  const { spawn, calls } = spawnWith({ spawn: "rex", env: {} });
+  const result = await spawn(["diff"]);
+  assert.equal(result.ok, false);
+  assert.match(!result.ok ? result.message : "", /not running inside a Rex session/i);
+  assert.deepEqual(calls, []);
+});
+
+test("spawn: auto picks Rex inside a Rex session", async () => {
+  const { spawn, calls } = spawnWith({ spawn: "auto", env: { REX_SESSION: "s1" } });
+  await spawn(["diff"]);
+  assert.deepEqual(calls, ["rex"]);
+});
+
+test("spawn: auto prefers herdr when herdr runs inside Rex", async () => {
+  const { spawn, calls } = spawnWith({ spawn: "auto", env: { HERDR_ENV: "1", REX_SESSION: "s1" } });
+  await spawn(["diff"]);
+  assert.deepEqual(calls, ["herdr", "herdr"]);
+});
+
+test("spawn: ghostty drives Ghostty even inside Rex", async () => {
+  const { spawn, calls } = spawnWith({ spawn: "ghostty", env: { REX_SESSION: "s1" } });
+  await spawn(["diff"]);
+  assert.deepEqual(calls, ["osascript"]);
+});
+
+test("the configured rex binary is the one invoked", async () => {
+  const { spawn, calls } = spawnWith({
+    spawn: "rex",
+    env: { REX_SESSION: "s1" },
+    config: { rexBin: "/opt/bin/rex" },
+  });
+  await spawn(["diff"]);
+  assert.deepEqual(calls, ["/opt/bin/rex"]);
+});
+
 test("the configured binaries are the ones invoked", async () => {
   const { spawn, calls } = spawnWith({
     spawn: "herdr",
