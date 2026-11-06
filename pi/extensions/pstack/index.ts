@@ -2,7 +2,7 @@
  * pstack — run poteto's pstack skills in pi.
  *
  * The skills are generated into `./pstack` by `generate.mjs`, which `npm install` runs. pi does not
- * load them as skills: 57 `/skill:` commands and generic names like `tdd` would crowd the
+ * load them as skills: some 60 `/skill:` commands and generic names like `tdd` would crowd the
  * command list, and pstack reaches its own skills by path. This extension adds
  * `/poteto-mode`, `/poteto-help`, `/setup-pstack`, `/pstack <skill> <task>`, and, on every turn, the installed pstack
  * path.

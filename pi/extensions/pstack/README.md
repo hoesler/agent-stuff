@@ -11,7 +11,7 @@ Runs [pstack](https://github.com/cursor/plugins/tree/main/pstack), poteto's engi
 | `pstack-general` and `pstack-readonly`, stand-ins for Cursor's `generalPurpose` | `pstack/docs/harness/agents/` | This repo. The generator copies them into `pstack/agents/`. |
 | This extension | `pi/extensions/pstack/` | This repo. |
 
-The package does not list `pstack/skills` in `pi.skills`, so pi registers none of the 57 skills: no `/skill:` commands, no catalog entries, and no collisions with your other skills. pstack does not need them registered. When one skill routes to another, the adapter has the agent read `<pstack>/skills/<name>/SKILL.md` by path. You run a skill with `/pstack <name>`.
+The package does not list `pstack/skills` in `pi.skills`, so pi registers none of its skills: no `/skill:` commands, no catalog entries, and no collisions with your other skills. pstack does not need them registered. When one skill routes to another, the adapter has the agent read `<pstack>/skills/<name>/SKILL.md` by path. You run a skill with `/pstack <name>`.
 
 ## What the extension adds
 
