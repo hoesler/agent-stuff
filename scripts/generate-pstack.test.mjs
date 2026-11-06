@@ -7,6 +7,7 @@ import {
   danglingLinks,
   insertPointer,
   OUT,
+  pinned,
   pointer,
   SECTIONS,
   sectionsFor,
@@ -18,7 +19,7 @@ import {
 const POINTER = /^In pi, read .*\n\n/m;
 const skills = readdirSync(join(OUT, "skills")).filter((name) => existsSync(join(OUT, "skills", name, "SKILL.md")));
 
-describe("the committed pi/pstack tree", () => {
+describe("the generated pi/pstack tree", () => {
   it("has no relative link that points at nothing", () => {
     const paths = walk(OUT).map((path) => relative(OUT, path));
     const all = new Set(paths);
@@ -63,6 +64,12 @@ describe("generator helpers", () => {
   it("puts the pointer under the H1, or after the frontmatter without one", () => {
     assert.equal(insertPointer("---\nname: a\n---\n\n# A\n\nBody\n", "P"), "---\nname: a\n---\n\n# A\n\nP\n\nBody\n");
     assert.equal(insertPointer("---\nname: a\n---\n\nBody\n", "P"), "---\nname: a\n---\n\nP\n\nBody\n");
+  });
+
+  it("reads the pinned commit from UPSTREAM", () => {
+    const sha = "8b3326d99fd4b993cb33a24dad8af03175c642c5";
+    assert.equal(pinned(`repo: x\npath: pstack\ncommit: ${sha}\ndate: 2026-10-22\n`), sha);
+    assert.throws(() => pinned("repo: x\n"), /pins no commit/);
   });
 
   it("keeps only the persona fields the subagent extension reads", () => {

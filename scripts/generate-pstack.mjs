@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Regenerates pi/pstack from cursor/plugins. See pi/pstack/docs/harness/pi.md for the adapter it points at.
+// Generates pi/pstack from cursor/plugins at the commit pinned in pi/pstack/UPSTREAM. `npm install` runs it, so
+// only UPSTREAM and docs/harness/ are committed. `--ref` moves the pin. See pi/pstack/docs/harness/pi.md for the adapter it points at.
 //
 //   node scripts/generate-pstack.mjs [--ref <ref>] [--source <plugins-checkout>] [--check]
 
@@ -12,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const OUT = join(ROOT, "pi", "pstack");
 const REPO = "https://github.com/cursor/plugins";
-const COMMAND = "node scripts/generate-pstack.mjs";
+const COMMAND = "npm run pstack -- --ref main";
 // Hand-written and owned by this repo. Regeneration never touches it.
 export const PRESERVED = "docs/harness";
 export const ADAPTER = "docs/harness/pi.md";
@@ -185,7 +186,8 @@ function render(pstack, upstream) {
     "UPSTREAM",
     text(
       `repo: ${REPO}\npath: pstack\ncommit: ${upstream.commit}\ndate: ${upstream.date}\n\n` +
-        `Everything here except ${PRESERVED}/ is generated. Do not edit it by hand. Run \`${COMMAND}\` and commit the result.\n`,
+        `Only this file and ${PRESERVED}/ are committed. \`npm install\` generates the rest from this commit; do not edit it by hand.\n` +
+        `To move to a newer upstream, run \`${COMMAND}\`, review the upstream changes, and commit this file.\n`,
     ),
   );
   return { files, used, skills };
@@ -205,9 +207,16 @@ function fetchUpstream(ref) {
   return dir;
 }
 
+/** The upstream commit UPSTREAM pins. */
+export function pinned(upstream) {
+  const commit = upstream.match(/^commit: ([0-9a-f]{40})$/m)?.[1];
+  if (!commit) throw new Error("pi/pstack/UPSTREAM pins no commit. Run `npm run pstack -- --ref main`.");
+  return commit;
+}
+
 function main(argv) {
   const option = (name) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-  const source = option("--source") ?? fetchUpstream(option("--ref") ?? "main");
+  const source = option("--source") ?? fetchUpstream(option("--ref") ?? pinned(readFileSync(join(OUT, "UPSTREAM"), "utf8")));
   const upstream = { commit: git(source, "rev-parse", "HEAD"), date: git(source, "log", "-1", "--format=%cs") };
   const { files, used, skills } = render(join(source, "pstack"), upstream);
   if (!option("--source")) rmSync(source, { recursive: true, force: true });
@@ -231,7 +240,7 @@ function main(argv) {
     });
     for (const path of drifted.slice(0, 20)) console.log(`pi/pstack/${path}`);
     if (drifted.length > 0) {
-      console.log(`pi/pstack is out of date with ${upstream.commit}. Run \`${COMMAND}\` and commit the result.`);
+      console.log(`pi/pstack is out of date with ${upstream.commit}. Run \`npm run pstack\`.`);
       process.exit(1);
     }
     console.log(`pi/pstack is up to date with ${upstream.commit}.`);

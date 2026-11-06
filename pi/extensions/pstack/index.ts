@@ -1,13 +1,14 @@
 /**
  * pstack — run poteto's pstack skills in pi.
  *
- * The skills are generated into `pi/pstack` by `scripts/generate-pstack.mjs`. pi does not
+ * The skills are generated into `pi/pstack` by `scripts/generate-pstack.mjs`, which `npm install` runs. pi does not
  * load them as skills: 57 `/skill:` commands and generic names like `tdd` would crowd the
  * command list, and pstack reaches its own skills by path. This extension adds
  * `/poteto-mode`, `/poteto-help`, `/setup-pstack`, `/pstack <skill> <task>`, and, on every turn, the installed pstack
  * path.
  */
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadSkillsFromDir, type ExtensionAPI, type ExtensionCommandContext, type Skill } from "@earendil-works/pi-coding-agent";
@@ -36,6 +37,10 @@ export default function pstackExtension(pi: ExtensionAPI): void {
   async function runSkill(name: string, task: string, ctx: ExtensionCommandContext): Promise<void> {
     const skill = loadSkills().find((candidate) => candidate.name === name);
     const content = skill && (await readIfPresent(skill.filePath));
+    if (!existsSync(join(root, "skills"))) {
+      ctx.ui.notify(`pstack: its skills are not generated yet. Run \`npm install\` in ${join(root, "..", "..")}.`, "error");
+      return;
+    }
     if (!skill || content === undefined) {
       ctx.ui.notify(`pstack: no skill named ${name} in ${join(root, "skills")}`, "error");
       return;

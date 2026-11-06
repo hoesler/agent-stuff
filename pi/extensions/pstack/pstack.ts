@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
-/** The generated pstack tree ships beside the extensions, so its path follows the package wherever it is installed. */
+/** `npm install` generates the pstack tree beside the extensions, so its path follows the package wherever it is installed. */
 export function pstackRoot(moduleUrl: string): string {
   return join(dirname(fileURLToPath(moduleUrl)), "..", "..", "pstack");
 }
