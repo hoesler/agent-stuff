@@ -10,5 +10,6 @@
     "allowImportingTsExtensions": true,
     "types": ["node"],
   },
-  "include": ["pi/extensions/**/*.ts"]
+  "include": ["pi/extensions/**/*.ts"],
+  "exclude": ["pi/extensions/pstack/pstack"]
 }

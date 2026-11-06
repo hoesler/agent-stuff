@@ -14,12 +14,12 @@ import {
   TERMS,
   toPersona,
   walk,
-} from "./generate-pstack.mjs";
+} from "./generate.mjs";
 
 const POINTER = /^In pi, read .*\n\n/m;
 const skills = readdirSync(join(OUT, "skills")).filter((name) => existsSync(join(OUT, "skills", name, "SKILL.md")));
 
-describe("the generated pi/pstack tree", () => {
+describe("the generated pstack tree", () => {
   it("has no relative link that points at nothing", () => {
     const paths = walk(OUT).map((path) => relative(OUT, path));
     const all = new Set(paths);
