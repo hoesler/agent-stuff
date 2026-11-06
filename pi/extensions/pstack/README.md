@@ -6,7 +6,7 @@ Runs [pstack](https://github.com/cursor/plugins/tree/main/pstack), poteto's engi
 
 | Piece | Where | Owned by |
 | --- | --- | --- |
-| The skills, the two upstream personas, the guide, the README | `pi/pstack/` | Generated from upstream. Never edited by hand. |
+| The skills, the two upstream personas, the guide, the README | `pi/pstack/` | Generated from upstream by `npm install`, not committed. Never edited by hand. |
 | The adapter: what each Cursor name means in pi | [`pi/pstack/docs/harness/pi.md`](../../pstack/docs/harness/pi.md) | This repo. |
 | `pstack-general` and `pstack-readonly`, stand-ins for Cursor's `generalPurpose` | `pi/pstack/docs/harness/agents/` | This repo. The generator copies them into `pi/pstack/agents/`. |
 | This extension | `pi/extensions/pstack/` | This repo. |
@@ -54,12 +54,15 @@ Cursor Automations, Bugbot, and cloud agents have no pi equivalent. Steps that n
 
 ## Updating from upstream
 
+Only `pi/pstack/UPSTREAM` and `pi/pstack/docs/harness/` are committed. `npm install`, which pi runs when it installs or updates the package, generates the rest from the commit `UPSTREAM` pins. Installing therefore needs network access to GitHub. A local-path install (`pi install ./agent-stuff`) never runs npm, so run `npm install` in the checkout once.
+
 ```bash
-npm run pstack                     # main
-npm run pstack -- --ref <sha>      # a specific commit
-npm run pstack -- --check          # fail if pi/pstack differs from what main generates
+npm run pstack                     # regenerate from the pinned commit
+npm run pstack -- --ref main       # move the pin to upstream main
+npm run pstack -- --ref <sha>      # move the pin to a specific commit
+npm run pstack -- --check          # fail if pi/pstack differs from what the pinned commit generates
 ```
 
 The generator sparse-clones `cursor/plugins`, rewrites everything in `pi/pstack/` except `docs/harness/`, and records the commit in `pi/pstack/UPSTREAM`. For each skill it scans for Cursor names, using upstream's own term list plus the ones pi lacks, and puts one line under the skill's heading that points at the adapter and names the sections that apply. A relative link to a file the tree leaves out, such as `automations/`, becomes a GitHub link at the recorded commit. It refuses to write when a Cursor name has no row in the adapter or a link points at nothing. `--source <checkout>` uses a local clone instead of fetching.
 
-Commit the result. `npm test` checks the committed tree offline: no broken relative link, every skill that uses a Cursor name has the right pointer, and the adapter covers every term.
+To bump, run `npm run pstack -- --ref main`, review upstream's changes with `https://github.com/cursor/plugins/compare/<old>...<new>` (path `pstack/`), and commit `UPSTREAM` with any adapter changes. `npm test` checks the generated tree: no broken relative link, every skill that uses a Cursor name has the right pointer, and the adapter covers every term.
