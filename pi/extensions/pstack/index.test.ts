@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -87,7 +87,7 @@ test("/pstack completes skill names until the task begins", () => {
   const items = h.complete("princ") as { value: string; label: string; description: string }[];
   assert.ok(items.length > 20);
   assert.ok(items.every((item) => item.label.startsWith("principle-") && item.value === `${item.label} ` && item.description));
-  assert.equal(h.complete("").length, 57);
+  assert.equal(h.complete("").length, readdirSync(join(root, "skills")).filter((name) => existsSync(join(root, "skills", name, "SKILL.md"))).length);
   assert.equal(h.complete("arena build"), null);
   assert.equal(h.complete("zzz"), null);
 });

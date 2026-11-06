@@ -1,7 +1,7 @@
 repo: https://github.com/cursor/plugins
 path: pstack
-commit: 8b3326d99fd4b993cb33a24dad8af03175c642c5
-date: 2026-10-22
+commit: 2776ddd2355d6d6c8747d3964600f28daf62f049
+date: 2026-11-05
 
 Only this file and docs/harness/ are committed. `npm install` generates the rest from this commit; do not edit it by hand.
 To move to a newer upstream, run `npm run pstack -- --ref main`, review the upstream changes, and commit this file.

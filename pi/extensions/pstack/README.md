@@ -6,18 +6,18 @@ Runs [pstack](https://github.com/cursor/plugins/tree/main/pstack), poteto's engi
 
 | Piece | Where | Owned by |
 | --- | --- | --- |
-| The skills, the two upstream personas, the guide, the README | `pi/pstack/` | Generated from upstream by `npm install`, not committed. Never edited by hand. |
-| The adapter: what each Cursor name means in pi | [`pi/pstack/docs/harness/pi.md`](../../pstack/docs/harness/pi.md) | This repo. |
-| `pstack-general` and `pstack-readonly`, stand-ins for Cursor's `generalPurpose` | `pi/pstack/docs/harness/agents/` | This repo. The generator copies them into `pi/pstack/agents/`. |
+| The skills, the two upstream personas, the guide, the README | `pstack/` | Generated from upstream by `npm install`, not committed. Never edited by hand. |
+| The adapter: what each Cursor name means in pi | [`pstack/docs/harness/pi.md`](pstack/docs/harness/pi.md) | This repo. |
+| `pstack-general` and `pstack-readonly`, stand-ins for Cursor's `generalPurpose` | `pstack/docs/harness/agents/` | This repo. The generator copies them into `pstack/agents/`. |
 | This extension | `pi/extensions/pstack/` | This repo. |
 
-The package does not list `pi/pstack/skills` in `pi.skills`, so pi registers none of the 57 skills: no `/skill:` commands, no catalog entries, and no collisions with your other skills. pstack does not need them registered. When one skill routes to another, the adapter has the agent read `<pstack>/skills/<name>/SKILL.md` by path. You run a skill with `/pstack <name>`.
+The package does not list `pstack/skills` in `pi.skills`, so pi registers none of its skills: no `/skill:` commands, no catalog entries, and no collisions with your other skills. pstack does not need them registered. When one skill routes to another, the adapter has the agent read `<pstack>/skills/<name>/SKILL.md` by path. You run a skill with `/pstack <name>`.
 
 ## What the extension adds
 
 - **`/poteto-mode <task>`**, **`/poteto-help <question>`**, and **`/setup-pstack`**, the same as `/pstack <name> …`. These three keep their own commands because upstream's docs name them and a newcomer needs them before knowing `/pstack`.
 - **`/pstack <skill> [task]`** runs any pstack skill. It completes skill names, reads the skill's `SKILL.md`, and sends it the way pi's own `/skill:` expansion does.
-- **The install path.** Every turn's system prompt says where `pi/pstack/` is. The adapter and the personas call it `<pstack>`. The path comes from the extension's own location, so it stays right when the package moves or updates, and a subagent child, which loads the same package, sees it too.
+- **The install path.** Every turn's system prompt says where `pstack/` is. The adapter and the personas call it `<pstack>`. The path comes from the extension's own location, so it stays right when the package moves or updates, and a subagent child, which loads the same package, sees it too.
 - **Where the skills are.** The prompt also says that pstack's skills are absent from the skill list and where to read them, so a request like "set up pstack" still finds `setup-pstack`.
 
 ## Models
@@ -54,15 +54,15 @@ Cursor Automations, Bugbot, and cloud agents have no pi equivalent. Steps that n
 
 ## Updating from upstream
 
-Only `pi/pstack/UPSTREAM` and `pi/pstack/docs/harness/` are committed. `npm install`, which pi runs when it installs or updates the package, generates the rest from the commit `UPSTREAM` pins. Installing therefore needs network access to GitHub. A local-path install (`pi install ./agent-stuff`) never runs npm, so run `npm install` in the checkout once.
+Only `pstack/UPSTREAM` and `pstack/docs/harness/` are committed. `npm install`, which pi runs when it installs or updates the package, generates the rest from the commit `UPSTREAM` pins. Installing therefore needs network access to GitHub. A local-path install (`pi install ./agent-stuff`) never runs npm, so run `npm install` in the checkout once.
 
 ```bash
 npm run pstack                     # regenerate from the pinned commit
 npm run pstack -- --ref main       # move the pin to upstream main
 npm run pstack -- --ref <sha>      # move the pin to a specific commit
-npm run pstack -- --check          # fail if pi/pstack differs from what the pinned commit generates
+npm run pstack -- --check          # fail if pstack/ differs from what the pinned commit generates
 ```
 
-The generator sparse-clones `cursor/plugins`, rewrites everything in `pi/pstack/` except `docs/harness/`, and records the commit in `pi/pstack/UPSTREAM`. For each skill it scans for Cursor names, using upstream's own term list plus the ones pi lacks, and puts one line under the skill's heading that points at the adapter and names the sections that apply. A relative link to a file the tree leaves out, such as `automations/`, becomes a GitHub link at the recorded commit. It refuses to write when a Cursor name has no row in the adapter or a link points at nothing. `--source <checkout>` uses a local clone instead of fetching.
+The generator, `generate.mjs`, sparse-clones `cursor/plugins`, rewrites everything in `pstack/` except `docs/harness/`, and records the commit in `pstack/UPSTREAM`. For each skill it scans for Cursor names, using upstream's own term list plus the ones pi lacks, and puts one line under the skill's heading that points at the adapter and names the sections that apply. A relative link to a file the tree leaves out, such as `automations/`, becomes a GitHub link at the recorded commit. It refuses to write when a Cursor name has no row in the adapter or a link points at nothing. `--source <checkout>` uses a local clone instead of fetching.
 
 To bump, run `npm run pstack -- --ref main`, review upstream's changes with `https://github.com/cursor/plugins/compare/<old>...<new>` (path `pstack/`), and commit `UPSTREAM` with any adapter changes. `npm test` checks the generated tree: no broken relative link, every skill that uses a Cursor name has the right pointer, and the adapter covers every term.

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Generates pi/pstack from cursor/plugins at the commit pinned in pi/pstack/UPSTREAM. `npm install` runs it, so
-// only UPSTREAM and docs/harness/ are committed. `--ref` moves the pin. See pi/pstack/docs/harness/pi.md for the adapter it points at.
+// Generates ./pstack from cursor/plugins at the commit pinned in ./pstack/UPSTREAM. `npm install` runs it, so
+// only UPSTREAM and docs/harness/ are committed. `--ref` moves the pin. See ./pstack/docs/harness/pi.md for the adapter it points at.
 //
-//   node scripts/generate-pstack.mjs [--ref <ref>] [--source <plugins-checkout>] [--check]
+//   node pi/extensions/pstack/generate.mjs [--ref <ref>] [--source <plugins-checkout>] [--check]
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -10,8 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-export const OUT = join(ROOT, "pi", "pstack");
+export const OUT = join(dirname(fileURLToPath(import.meta.url)), "pstack");
 const REPO = "https://github.com/cursor/plugins";
 const COMMAND = "npm run pstack -- --ref main";
 // Hand-written and owned by this repo. Regeneration never touches it.
@@ -210,7 +209,7 @@ function fetchUpstream(ref) {
 /** The upstream commit UPSTREAM pins. */
 export function pinned(upstream) {
   const commit = upstream.match(/^commit: ([0-9a-f]{40})$/m)?.[1];
-  if (!commit) throw new Error("pi/pstack/UPSTREAM pins no commit. Run `npm run pstack -- --ref main`.");
+  if (!commit) throw new Error("pi/extensions/pstack/pstack/UPSTREAM pins no commit. Run `npm run pstack -- --ref main`.");
   return commit;
 }
 
@@ -228,7 +227,7 @@ function main(argv) {
   const preserved = new Map(walk(join(OUT, PRESERVED)).map((path) => [relative(OUT, path), file(path)]));
   const all = new Set([...files.keys(), ...preserved.keys()]);
   const has = (path) => all.has(path) || [...all].some((key) => key.startsWith(`${path}/`));
-  problems.push(...danglingLinks(new Map([...files, ...preserved]), has).map((link) => `${link}, which is not in pi/pstack`));
+  problems.push(...danglingLinks(new Map([...files, ...preserved]), has).map((link) => `${link}, which is not in the pstack tree`));
   for (const problem of problems) console.log(`FAIL ${problem}`);
   if (problems.length > 0) process.exit(1);
 
@@ -238,12 +237,12 @@ function main(argv) {
       const [want, have] = [files.get(path), onDisk.get(path)];
       return !want || !have || !want.bytes.equals(have.bytes) || want.executable !== have.executable;
     });
-    for (const path of drifted.slice(0, 20)) console.log(`pi/pstack/${path}`);
+    for (const path of drifted.slice(0, 20)) console.log(`pi/extensions/pstack/pstack/${path}`);
     if (drifted.length > 0) {
-      console.log(`pi/pstack is out of date with ${upstream.commit}. Run \`npm run pstack\`.`);
+      console.log(`The pstack tree is out of date with ${upstream.commit}. Run \`npm run pstack\`.`);
       process.exit(1);
     }
-    console.log(`pi/pstack is up to date with ${upstream.commit}.`);
+    console.log(`The pstack tree is up to date with ${upstream.commit}.`);
     return;
   }
   for (const path of onDisk.keys()) rmSync(join(OUT, path));
